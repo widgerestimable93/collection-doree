@@ -712,9 +712,15 @@ Router.add('/admin', { title: '/admin', render: () => {
             <div class="full-row"><label>Description</label><textarea name="description" rows="3" class="field-input"></textarea></div>
             <div class="full-row"><label>Caractéristiques</label><input type="text" name="caracteristiques" placeholder="Fait main, cuir véritable, ..." class="field-input"></div>
             <div class="full-row">
-              <label>Photos (URLs séparées par une virgule) *</label>
-              <input type="text" name="photos" required placeholder="https://.../photo1.jpg, https://.../photo2.jpg" class="field-input">
-              <p style="font-size:0.78rem;color:var(--gris-texte);margin-top:6px">Héberge tes photos sur Google Drive (lien public), Imgur ou GitHub, puis colle les liens directs ici.</p>
+              <label>Photos du produit *</label>
+              <input type="file" id="photo-input" accept="image/*" multiple style="display:none">
+              <div id="upload-zone" style="border:2px dashed rgba(212,175,55,0.3);border-radius:var(--radius);padding:28px;text-align:center;cursor:pointer;transition:border-color var(--transition)" onclick="document.getElementById('photo-input').click()">
+                <p style="color:var(--gris-texte);font-size:0.9rem">Clique ou glisse tes photos ici</p>
+                <p style="color:var(--or);font-size:0.78rem;margin-top:6px">JPG, PNG, WEBP — plusieurs photos possibles</p>
+              </div>
+              <div id="photos-preview" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px"></div>
+              <div id="upload-progress" style="color:var(--or-clair);font-size:0.82rem;margin-top:8px"></div>
+              <input type="hidden" name="photos" id="photos-hidden">
             </div>
             <div><label><input type="checkbox" name="disponible" checked style="width:auto;margin-right:8px">Disponible</label></div>
             <div><label><input type="checkbox" name="vedette" style="width:auto;margin-right:8px">Produit vedette</label></div>
@@ -776,6 +782,8 @@ Router.add('/admin', { title: '/admin', render: () => {
     form.prixPromo.value = p.PrixPromo || ''; form.categorie.value = p.Categorie; form.stock.value = p.Stock;
     form.description.value = p.Description || ''; form.caracteristiques.value = p.Caracteristiques || '';
     form.photos.value = (p.Photos || []).join(', '); form.disponible.checked = !!p.Disponible; form.vedette.checked = !!p.Vedette;
+    uploadedUrls = p.Photos || [];
+    updateHidden(); refreshPreview();
     document.getElementById('form-title').textContent = 'Modifier le produit';
     document.getElementById('cancel-edit').style.display = 'inline-block';
     document.querySelector('[data-tab="ajouter"]').click();
@@ -794,6 +802,85 @@ Router.add('/admin', { title: '/admin', render: () => {
     if (res.success) chargerProduitsAdmin(); else alert(res.error || 'Erreur lors de la suppression.');
   }
 
+
+  // ---- Logique upload photos ----
+  const photoInput  = document.getElementById('photo-input');
+  const uploadZone  = document.getElementById('upload-zone');
+  const preview     = document.getElementById('photos-preview');
+  const progress    = document.getElementById('upload-progress');
+  const photosHidden = document.getElementById('photos-hidden');
+
+  let uploadedUrls = [];
+
+  function updateHidden() {
+    photosHidden.value = uploadedUrls.join(',');
+  }
+
+  function refreshPreview() {
+    preview.innerHTML = uploadedUrls.map((url, i) => `
+      <div style="position:relative;width:80px;height:80px">
+        <img src="${url}" style="width:80px;height:80px;object-fit:cover;border-radius:var(--radius);border:1px solid rgba(212,175,55,0.3)">
+        <button type="button" onclick="removePhoto(${i})" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:#e0554f;color:#fff;font-size:0.7rem;display:flex;align-items:center;justify-content:center">✕</button>
+      </div>`).join('');
+  }
+
+  window.removePhoto = function(index) {
+    uploadedUrls.splice(index, 1);
+    updateHidden();
+    refreshPreview();
+  };
+
+  async function uploadFichier(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = e.target.result.split(',')[1];
+        const res = await API.post('uploadImage', {
+          base64, mimeType: file.type, nom: file.name
+        }, adminToken);
+        if (res.success) resolve(res.url);
+        else reject(new Error(res.error || 'Erreur upload'));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function traiterFichiers(files) {
+    if (!files.length) return;
+    progress.textContent = 'Upload en cours...';
+    uploadZone.style.borderColor = 'var(--or)';
+    let ok = 0;
+    for (const file of Array.from(files)) {
+      try {
+        const url = await uploadFichier(file);
+        uploadedUrls.push(url);
+        ok++;
+        progress.textContent = `${ok}/${files.length} photo(s) uploadée(s)...`;
+        refreshPreview();
+        updateHidden();
+      } catch (err) {
+        progress.style.color = '#e0554f';
+        progress.textContent = 'Erreur : ' + err.message;
+      }
+    }
+    progress.style.color = 'var(--or-clair)';
+    progress.textContent = ok + ' photo(s) prête(s).';
+    uploadZone.style.borderColor = 'rgba(212,175,55,0.3)';
+  }
+
+  photoInput.addEventListener('change', (e) => traiterFichiers(e.target.files));
+
+  // Drag & Drop
+  uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.style.borderColor='var(--or)'; });
+  uploadZone.addEventListener('dragleave', () => { uploadZone.style.borderColor='rgba(212,175,55,0.3)'; });
+  uploadZone.addEventListener('drop', (e) => { e.preventDefault(); traiterFichiers(e.dataTransfer.files); });
+
+  // Réinitialise les photos lors de l'annulation de modification
+  const origCancelEdit = document.getElementById('cancel-edit').onclick;
+  document.getElementById('cancel-edit').addEventListener('click', () => {
+    uploadedUrls = []; updateHidden(); refreshPreview(); progress.textContent = '';
+  });
+
   document.getElementById('produit-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const form = e.target;
@@ -801,7 +888,7 @@ Router.add('/admin', { title: '/admin', render: () => {
       id: form.id.value || undefined, nom: form.nom.value, reference: form.reference.value, prix: form.prix.value,
       prixPromo: form.prixPromo.value, categorie: form.categorie.value, stock: form.stock.value,
       description: form.description.value, caracteristiques: form.caracteristiques.value,
-      photos: form.photos.value.split(',').map(s=>s.trim()).filter(Boolean),
+      photos: uploadedUrls.length ? uploadedUrls : form.photos.value.split(',').map(s=>s.trim()).filter(Boolean),
       disponible: form.disponible.checked, vedette: form.vedette.checked
     };
     const action = data.id ? 'produitModifier' : 'produitCreer';
