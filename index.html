@@ -692,7 +692,7 @@ Router.add('/faq', { title: '/faq', render: () => {
 
 /* ----- Admin ----- */
 Router.add('/admin', { title: '/admin', render: () => {
-  let adminToken = sessionStorage.getItem('lcd_admin_token') || null;
+  let adminToken = localStorage.getItem('lcd_admin_token') || null;
 
   document.getElementById('view').innerHTML = `
     <div class="container">
@@ -763,11 +763,16 @@ Router.add('/admin', { title: '/admin', render: () => {
     e.preventDefault();
     const password = document.getElementById('login-password').value;
     const res = await API.post('login', { password });
-    if (res.token) { adminToken = res.token; sessionStorage.setItem('lcd_admin_token', adminToken); showAdmin(); }
+    if (res.token) { adminToken = res.token; localStorage.setItem('lcd_admin_token', adminToken); showAdmin(); }
     else document.getElementById('login-error').textContent = res.error || 'Erreur de connexion.';
   });
 
-  document.getElementById('logout-btn').addEventListener('click', () => { sessionStorage.removeItem('lcd_admin_token'); renderRoute(); });
+  document.getElementById('logout-btn').addEventListener('click', async () => {
+    try { await API.post('logout', {}, adminToken); } catch (e) { /* ignore, on deconnecte quand meme cote client */ }
+    adminToken = null;
+    localStorage.removeItem('lcd_admin_token');
+    renderRoute();
+  });
 
   document.querySelectorAll('.tab-buttons button').forEach(btn => {
     btn.addEventListener('click', () => {
