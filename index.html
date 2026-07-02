@@ -782,7 +782,8 @@ Router.add('/admin', { title: '/admin', render: () => {
     form.prixPromo.value = p.PrixPromo || ''; form.categorie.value = p.Categorie; form.stock.value = p.Stock;
     form.description.value = p.Description || ''; form.caracteristiques.value = p.Caracteristiques || '';
     form.photos.value = (p.Photos || []).join(', '); form.disponible.checked = !!p.Disponible; form.vedette.checked = !!p.Vedette;
-    uploadedUrls = p.Photos || [];
+    items = (p.Photos || []).map(url => ({ localSrc: url, status: 'done', url, error: null, name: '', file: null }));
+    uploadedUrls = items.map(it => it.url);
     updateHidden(); refreshPreview();
     document.getElementById('form-title').textContent = 'Modifier le produit';
     document.getElementById('cancel-edit').style.display = 'inline-block';
@@ -810,65 +811,101 @@ Router.add('/admin', { title: '/admin', render: () => {
   const progress    = document.getElementById('upload-progress');
   const photosHidden = document.getElementById('photos-hidden');
 
-  let uploadedUrls = [];
+  let uploadedUrls = [];   // URLs Drive confirmées (envoyées au serveur)
+  let items = [];          // { localSrc, status:'uploading'|'done'|'error', url, error, name, file }
 
   function updateHidden() {
     photosHidden.value = uploadedUrls.join(',');
   }
 
   function refreshPreview() {
-    preview.innerHTML = uploadedUrls.map((url, i) => `
+    preview.innerHTML = items.map((item, i) => {
+      const src = item.status === 'done' ? item.url : item.localSrc;
+      const overlay = item.status === 'uploading'
+        ? `<div style="position:absolute;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;border-radius:var(--radius);color:#fff;font-size:0.65rem">...</div>`
+        : item.status === 'error'
+        ? `<div style="position:absolute;inset:0;background:rgba(224,85,79,0.55);display:flex;align-items:center;justify-content:center;border-radius:var(--radius);color:#fff;font-size:1rem" title="${(item.error||'').replace(/"/g,'')}">⚠</div>`
+        : '';
+      const borderColor = item.status === 'error' ? '#e0554f' : 'rgba(212,175,55,0.3)';
+      return `
       <div style="position:relative;width:80px;height:80px">
-        <img src="${url}" style="width:80px;height:80px;object-fit:cover;border-radius:var(--radius);border:1px solid rgba(212,175,55,0.3)">
-        <button type="button" onclick="removePhoto(${i})" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:#e0554f;color:#fff;font-size:0.7rem;display:flex;align-items:center;justify-content:center">✕</button>
-      </div>`).join('');
+        <img src="${src}" style="width:80px;height:80px;object-fit:cover;border-radius:var(--radius);border:1px solid ${borderColor}">
+        ${overlay}
+        <button type="button" onclick="removePhoto(${i})" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:#e0554f;color:#fff;font-size:0.7rem;display:flex;align-items:center;justify-content:center;border:none;cursor:pointer">✕</button>
+      </div>`;
+    }).join('');
   }
 
   window.removePhoto = function(index) {
-    uploadedUrls.splice(index, 1);
+    items.splice(index, 1);
+    uploadedUrls = items.filter(it => it.status === 'done').map(it => it.url);
     updateHidden();
     refreshPreview();
   };
 
-  async function uploadFichier(file) {
+  function readAsDataURL(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = async (e) => {
-        const base64 = e.target.result.split(',')[1];
-        const res = await API.post('uploadImage', {
-          base64, mimeType: file.type, nom: file.name
-        }, adminToken);
-        if (res.success) resolve(res.url);
-        else reject(new Error(res.error || 'Erreur upload'));
-      };
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = () => reject(new Error('Lecture du fichier impossible'));
       reader.readAsDataURL(file);
     });
   }
 
   async function traiterFichiers(files) {
     if (!files.length) return;
-    progress.textContent = 'Upload en cours...';
     uploadZone.style.borderColor = 'var(--or)';
-    let ok = 0;
+
+    // 1) Aperçu local immédiat pour chaque fichier, AVANT tout upload
+    const nouveaux = [];
     for (const file of Array.from(files)) {
-      try {
-        const url = await uploadFichier(file);
-        uploadedUrls.push(url);
-        ok++;
-        progress.textContent = `${ok}/${files.length} photo(s) uploadée(s)...`;
-        refreshPreview();
-        updateHidden();
-      } catch (err) {
-        progress.style.color = '#e0554f';
-        progress.textContent = 'Erreur : ' + err.message;
-      }
+      const dataUrl = await readAsDataURL(file);
+      const item = { localSrc: dataUrl, status: 'uploading', url: null, error: null, name: file.name, file };
+      items.push(item);
+      nouveaux.push(item);
     }
+    refreshPreview();
+
+    // 2) Upload réel vers Drive, mise à jour de l'aperçu au fur et à mesure
+    let ok = 0, erreurs = 0;
     progress.style.color = 'var(--or-clair)';
-    progress.textContent = ok + ' photo(s) prête(s).';
-    uploadZone.style.borderColor = 'rgba(212,175,55,0.3)';
+    for (const item of nouveaux) {
+      try {
+        const base64 = item.localSrc.split(',')[1];
+        const res = await API.post('uploadImage', {
+          base64, mimeType: item.file.type, nom: item.file.name
+        }, adminToken);
+        if (res && res.success) {
+          item.status = 'done';
+          item.url = res.url;
+          ok++;
+        } else {
+          item.status = 'error';
+          item.error = (res && res.error) || 'Erreur upload';
+          erreurs++;
+        }
+      } catch (err) {
+        item.status = 'error';
+        item.error = err.message || 'Erreur réseau';
+        erreurs++;
+      }
+      uploadedUrls = items.filter(it => it.status === 'done').map(it => it.url);
+      updateHidden();
+      refreshPreview();
+      progress.textContent = `${ok}/${nouveaux.length} photo(s) uploadée(s)` + (erreurs ? `, ${erreurs} erreur(s)` : '') + '...';
+    }
+
+    uploadZone.style.borderColor = erreurs ? '#e0554f' : 'rgba(212,175,55,0.3)';
+    if (erreurs) {
+      progress.style.color = '#e0554f';
+      progress.textContent = `${ok} photo(s) prête(s), ${erreurs} échec(s). Survole ⚠ sur la vignette pour voir l'erreur.`;
+    } else {
+      progress.style.color = 'var(--or-clair)';
+      progress.textContent = ok + ' photo(s) prête(s).';
+    }
   }
 
-  photoInput.addEventListener('change', (e) => traiterFichiers(e.target.files));
+  photoInput.addEventListener('change', (e) => { traiterFichiers(e.target.files); photoInput.value = ''; });
 
   // Drag & Drop
   uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.style.borderColor='var(--or)'; });
@@ -878,7 +915,7 @@ Router.add('/admin', { title: '/admin', render: () => {
   // Réinitialise les photos lors de l'annulation de modification
   const origCancelEdit = document.getElementById('cancel-edit').onclick;
   document.getElementById('cancel-edit').addEventListener('click', () => {
-    uploadedUrls = []; updateHidden(); refreshPreview(); progress.textContent = '';
+    items = []; uploadedUrls = []; updateHidden(); refreshPreview(); progress.textContent = '';
   });
 
   document.getElementById('produit-form').addEventListener('submit', async (e) => {
