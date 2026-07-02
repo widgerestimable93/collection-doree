@@ -226,12 +226,30 @@ const API = {
     return res.json();
   },
   async post(action, data, token) {
-    const res = await fetch(CONFIG.API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action, data, token })
-    });
-    return res.json();
+    console.log('[API.post] →', action, { data: (data && data.base64) ? { ...data, base64: `(${data.base64.length} caractères, tronqué)` } : data, tokenPresent: !!token });
+    let res;
+    try {
+      res = await fetch(CONFIG.API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action, data, token })
+      });
+    } catch (networkErr) {
+      console.error('[API.post] Erreur réseau (fetch a échoué) pour', action, networkErr);
+      throw networkErr;
+    }
+    console.log('[API.post] ←', action, 'HTTP', res.status, res.statusText);
+    const rawText = await res.text();
+    console.log('[API.post] ← corps brut (', rawText.length, 'caractères ) :', rawText.slice(0, 2000));
+    let json;
+    try {
+      json = JSON.parse(rawText);
+    } catch (parseErr) {
+      console.error('[API.post] Réponse non-JSON reçue pour', action, '— probablement une page HTML (redirection de connexion Google, erreur de déploiement GAS, etc.)', parseErr);
+      throw new Error('Réponse serveur invalide (non-JSON). Voir console pour le détail.');
+    }
+    console.log('[API.post] JSON parsé pour', action, ':', json);
+    return json;
   }
 };
 
@@ -870,6 +888,7 @@ Router.add('/admin', { title: '/admin', render: () => {
     let ok = 0, erreurs = 0;
     progress.style.color = 'var(--or-clair)';
     for (const item of nouveaux) {
+      console.log('[traiterFichiers] Upload de', item.name, '— taille base64:', item.localSrc.length, 'mimeType:', item.file.type);
       try {
         const base64 = item.localSrc.split(',')[1];
         const res = await API.post('uploadImage', {
@@ -879,15 +898,18 @@ Router.add('/admin', { title: '/admin', render: () => {
           item.status = 'done';
           item.url = res.url;
           ok++;
+          console.log('[traiterFichiers] OK pour', item.name, '→', res.url);
         } else {
           item.status = 'error';
           item.error = (res && res.error) || 'Erreur upload';
           erreurs++;
+          console.error('[traiterFichiers] ECHEC pour', item.name, '— réponse serveur:', res);
         }
       } catch (err) {
         item.status = 'error';
         item.error = err.message || 'Erreur réseau';
         erreurs++;
+        console.error('[traiterFichiers] EXCEPTION pour', item.name, ':', err);
       }
       uploadedUrls = items.filter(it => it.status === 'done').map(it => it.url);
       updateHidden();
