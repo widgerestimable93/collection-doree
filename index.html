@@ -188,7 +188,9 @@ const CONFIG = {
   WHATSAPP_NUMBER: "18297839254",
   CONTACT_EMAIL: "roseloreestimable86@gmail.com",
   SITE_NAME: "La Collection Dorée",
-  CURRENCY: "USD" // à confirmer : HTG ou USD selon les prix réels
+  CURRENCY: "USD", // à confirmer : HTG ou USD selon les prix réels
+  CLOUDINARY_CLOUD_NAME: "brpyt6cw",
+  CLOUDINARY_UPLOAD_PRESET: "collection_doree"
 };
 
 function formatPrice(value) {
@@ -875,6 +877,19 @@ Router.add('/admin', { title: '/admin', render: () => {
     });
   }
 
+  async function uploadVersCloudinary(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', CONFIG.CLOUDINARY_UPLOAD_PRESET);
+    const url = `https://api.cloudinary.com/v1_1/${CONFIG.CLOUDINARY_CLOUD_NAME}/image/upload`;
+    const res = await fetch(url, { method: 'POST', body: formData });
+    const json = await res.json();
+    if (!res.ok || json.error) {
+      throw new Error((json.error && json.error.message) || `Erreur HTTP ${res.status}`);
+    }
+    return json.secure_url;
+  }
+
   async function traiterFichiers(files) {
     if (!files.length) return;
     uploadZone.style.borderColor = 'var(--or)';
@@ -889,27 +904,17 @@ Router.add('/admin', { title: '/admin', render: () => {
     }
     refreshPreview();
 
-    // 2) Upload réel vers Drive, mise à jour de l'aperçu au fur et à mesure
+    // 2) Upload réel vers Cloudinary, mise à jour de l'aperçu au fur et à mesure
     let ok = 0, erreurs = 0;
     progress.style.color = 'var(--or-clair)';
     for (const item of nouveaux) {
-      console.log('[traiterFichiers] Upload de', item.name, '— taille base64:', item.localSrc.length, 'mimeType:', item.file.type);
+      console.log('[traiterFichiers] Upload de', item.name, 'vers Cloudinary, mimeType:', item.file.type);
       try {
-        const base64 = item.localSrc.split(',')[1];
-        const res = await API.post('uploadImage', {
-          base64, mimeType: item.file.type, nom: item.file.name
-        }, adminToken);
-        if (res && res.success) {
-          item.status = 'done';
-          item.url = res.url;
-          ok++;
-          console.log('[traiterFichiers] OK pour', item.name, '→', res.url);
-        } else {
-          item.status = 'error';
-          item.error = (res && res.error) || 'Erreur upload';
-          erreurs++;
-          console.error('[traiterFichiers] ECHEC pour', item.name, '— réponse serveur:', res);
-        }
+        const secureUrl = await uploadVersCloudinary(item.file);
+        item.status = 'done';
+        item.url = secureUrl;
+        ok++;
+        console.log('[traiterFichiers] OK pour', item.name, '→', secureUrl);
       } catch (err) {
         item.status = 'error';
         item.error = err.message || 'Erreur réseau';
