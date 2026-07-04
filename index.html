@@ -795,6 +795,9 @@ Router.add('/admin', { title: '/admin', render: () => {
       </div>
     </div>`;
 
+  let chartJsLoadPromise = null;
+  let dashboardCharts = {};
+
   function showAdmin() {
     document.getElementById('login-shell').style.display = 'none';
     document.getElementById('admin-shell').style.display = 'block';
@@ -843,7 +846,6 @@ Router.add('/admin', { title: '/admin', render: () => {
     tbody.querySelectorAll('[data-delete]').forEach(el => el.addEventListener('click', () => supprimerProduit(el.dataset.delete)));
   }
 
-  let chartJsLoadPromise = null;
   function loadChartJs() {
     if (window.Chart) return Promise.resolve();
     if (chartJsLoadPromise) return chartJsLoadPromise;
@@ -857,7 +859,6 @@ Router.add('/admin', { title: '/admin', render: () => {
     return chartJsLoadPromise;
   }
 
-  let dashboardCharts = {};
   function detruireGraphique(id) {
     if (dashboardCharts[id]) { dashboardCharts[id].destroy(); delete dashboardCharts[id]; }
   }
@@ -987,7 +988,7 @@ Router.add('/admin', { title: '/admin', render: () => {
     if (!messages.length) { el.innerHTML = '<p style="color:var(--gris-texte)">Aucun message.</p>'; return; }
     el.innerHTML = messages.map(m => `
       <div style="padding:6px 0;border-bottom:1px solid rgba(212,175,55,0.08)">
-        ${!m.lu ? '<strong style="color:var(--or-clair)">\u25CF </strong>' : ''}${escapeHtml(m.nom || 'Anonyme')} — <span style="color:var(--gris-texte)">${escapeHtml(m.sujet || 'Sans sujet')}</span>
+        ${!m.lu ? '<strong style="color:var(--or-clair)">● </strong>' : ''}${escapeHtml(m.nom || 'Anonyme')} — <span style="color:var(--gris-texte)">${escapeHtml(m.sujet || 'Sans sujet')}</span>
       </div>`).join('');
   }
 
