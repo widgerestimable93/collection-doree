@@ -252,6 +252,16 @@ function getProduitEmail(produit) {
   return (produit.Vendeur && produit.Vendeur.email) || CONFIG.CONTACT_EMAIL;
 }
 
+/** Affiche/masque l'aperçu d'une image téléversée (logo, bannière) — partagé
+ *  entre /admin et /vendeur pour ne pas dupliquer cette logique. */
+function afficherApercuImage(prefixe, url) {
+  const img = document.getElementById(prefixe + '-preview');
+  const label = document.getElementById(prefixe + '-label');
+  if (!img || !label) return;
+  if (url) { img.src = url; img.style.display = 'block'; label.textContent = 'Changer l\u2019image'; }
+  else { img.style.display = 'none'; label.textContent = 'Clique pour choisir une image'; }
+}
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str || '';
@@ -938,8 +948,24 @@ Router.add('/admin', { title: '/admin', render: () => {
               <div><label>Téléphone</label><input type="tel" name="telephone" class="field-input"></div>
               <div><label>WhatsApp</label><input type="text" name="whatsapp" class="field-input"></div>
               <div class="full-row"><label>Adresse</label><input type="text" name="adresse" class="field-input"></div>
-              <div><label>URL du logo</label><input type="url" name="logo" class="field-input"></div>
-              <div><label>URL de la bannière</label><input type="url" name="banniere" class="field-input"></div>
+              <div>
+                <label>Logo de la boutique</label>
+                <input type="file" id="a-logo-input" accept="image/*" style="display:none">
+                <div id="a-logo-zone" style="border:2px dashed rgba(212,175,55,0.3);border-radius:var(--radius);padding:14px;text-align:center;cursor:pointer" onclick="document.getElementById('a-logo-input').click()">
+                  <img id="a-logo-preview" style="max-width:80px;max-height:80px;border-radius:50%;object-fit:cover;display:none;margin:0 auto 6px">
+                  <p id="a-logo-label" style="color:var(--gris-texte);font-size:0.85rem">Clique pour choisir une image</p>
+                </div>
+                <input type="hidden" name="logo" id="a-logo-hidden">
+              </div>
+              <div>
+                <label>Bannière de la boutique</label>
+                <input type="file" id="a-banniere-input" accept="image/*" style="display:none">
+                <div id="a-banniere-zone" style="border:2px dashed rgba(212,175,55,0.3);border-radius:var(--radius);padding:14px;text-align:center;cursor:pointer" onclick="document.getElementById('a-banniere-input').click()">
+                  <img id="a-banniere-preview" style="max-width:100%;max-height:80px;border-radius:4px;object-fit:cover;display:none;margin:0 auto 6px">
+                  <p id="a-banniere-label" style="color:var(--gris-texte);font-size:0.85rem">Clique pour choisir une image</p>
+                </div>
+                <input type="hidden" name="banniere" id="a-banniere-hidden">
+              </div>
               <div class="full-row"><label>Description</label><textarea name="description" rows="2" class="field-input"></textarea></div>
               <div>
                 <label>Plan</label>
@@ -1069,10 +1095,14 @@ Router.add('/admin', { title: '/admin', render: () => {
       form.email.value = vendeur.Email || ''; form.telephone.value = vendeur.Telephone || ''; form.whatsapp.value = vendeur.Whatsapp || '';
       form.adresse.value = vendeur.Adresse || ''; form.logo.value = vendeur.Logo || ''; form.banniere.value = vendeur.Banniere || '';
       form.description.value = vendeur.Description || ''; form.plan.value = vendeur.Plan || 'gratuit'; form.statut.value = vendeur.Statut || 'actif';
+      afficherApercuImage('a-logo', vendeur.Logo);
+      afficherApercuImage('a-banniere', vendeur.Banniere);
     } else {
       document.getElementById('vendeur-form-title').textContent = 'Nouveau vendeur';
       passwordField.style.display = 'block';
       form.reset(); form.id.value = '';
+      afficherApercuImage('a-logo', '');
+      afficherApercuImage('a-banniere', '');
     }
   }
 
@@ -1080,6 +1110,24 @@ Router.add('/admin', { title: '/admin', render: () => {
   document.getElementById('vendeur-form-annuler').addEventListener('click', () => {
     document.getElementById('vendeur-form-shell').style.display = 'none';
   });
+
+  function brancherUploadImageUniqueAdmin(prefixe) {
+    document.getElementById(prefixe + '-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const label = document.getElementById(prefixe + '-label');
+      label.textContent = 'Envoi en cours...';
+      try {
+        const url = await uploadVersCloudinary(file);
+        document.getElementById(prefixe + '-hidden').value = url;
+        afficherApercuImage(prefixe, url);
+      } catch (err) {
+        label.textContent = "Échec de l'envoi, réessaie.";
+      }
+    });
+  }
+  brancherUploadImageUniqueAdmin('a-logo');
+  brancherUploadImageUniqueAdmin('a-banniere');
 
   document.getElementById('vendeur-admin-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1735,8 +1783,24 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
             <div><label>Téléphone</label><input type="tel" name="telephone" class="field-input"></div>
             <div><label>WhatsApp (avec indicatif, ex: 18291234567)</label><input type="text" name="whatsapp" class="field-input"></div>
             <div class="full-row"><label>Adresse</label><input type="text" name="adresse" class="field-input"></div>
-            <div><label>URL du logo</label><input type="url" name="logo" class="field-input"></div>
-            <div><label>URL de la bannière</label><input type="url" name="banniere" class="field-input"></div>
+            <div>
+              <label>Logo de la boutique</label>
+              <input type="file" id="v-logo-input" accept="image/*" style="display:none">
+              <div id="v-logo-zone" style="border:2px dashed rgba(212,175,55,0.3);border-radius:var(--radius);padding:14px;text-align:center;cursor:pointer" onclick="document.getElementById('v-logo-input').click()">
+                <img id="v-logo-preview" style="max-width:80px;max-height:80px;border-radius:50%;object-fit:cover;display:none;margin:0 auto 6px">
+                <p id="v-logo-label" style="color:var(--gris-texte);font-size:0.85rem">Clique pour choisir une image</p>
+              </div>
+              <input type="hidden" name="logo" id="v-logo-hidden">
+            </div>
+            <div>
+              <label>Bannière de la boutique</label>
+              <input type="file" id="v-banniere-input" accept="image/*" style="display:none">
+              <div id="v-banniere-zone" style="border:2px dashed rgba(212,175,55,0.3);border-radius:var(--radius);padding:14px;text-align:center;cursor:pointer" onclick="document.getElementById('v-banniere-input').click()">
+                <img id="v-banniere-preview" style="max-width:100%;max-height:80px;border-radius:4px;object-fit:cover;display:none;margin:0 auto 6px">
+                <p id="v-banniere-label" style="color:var(--gris-texte);font-size:0.85rem">Clique pour choisir une image</p>
+              </div>
+              <input type="hidden" name="banniere" id="v-banniere-hidden">
+            </div>
             <div class="full-row"><label>Description de la boutique</label><textarea name="description" rows="3" class="field-input"></textarea></div>
             <div class="full-row">
               <button type="submit" class="btn btn-primary">Enregistrer</button>
@@ -1798,9 +1862,29 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
     form.telephone.value = vendeurInfo.telephone || ''; form.whatsapp.value = vendeurInfo.whatsapp || '';
     form.adresse.value = vendeurInfo.adresse || ''; form.logo.value = vendeurInfo.logo || '';
     form.banniere.value = vendeurInfo.banniere || ''; form.description.value = vendeurInfo.description || '';
+    afficherApercuImage('v-logo', vendeurInfo.logo);
+    afficherApercuImage('v-banniere', vendeurInfo.banniere);
     document.getElementById('v-profil-lien').innerHTML = vendeurInfo.slug
       ? `Page publique : <a href="#/boutique?slug=${vendeurInfo.slug}" target="_blank" style="color:var(--or)">#/boutique?slug=${vendeurInfo.slug}</a>` : '';
   }
+
+  function brancherUploadImageUnique(prefixe, nomChamp) {
+    document.getElementById(prefixe + '-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const label = document.getElementById(prefixe + '-label');
+      label.textContent = 'Envoi en cours...';
+      try {
+        const url = await uploaderFichier(file);
+        document.getElementById(prefixe + '-hidden').value = url;
+        afficherApercuImage(prefixe, url);
+      } catch (err) {
+        label.textContent = "Échec de l'envoi, réessaie.";
+      }
+    });
+  }
+  brancherUploadImageUnique('v-logo', 'logo');
+  brancherUploadImageUnique('v-banniere', 'banniere');
 
   document.getElementById('v-profil-form').addEventListener('submit', async (e) => {
     e.preventDefault();
