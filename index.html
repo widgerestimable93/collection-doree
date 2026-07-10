@@ -234,6 +234,9 @@ function formatPrice(value) {
 
 function buildWhatsappLink(produit, options = {}) {
   const quantite = options.quantite || 1;
+  // Si le produit appartient à un vendeur (plateforme multi-boutiques), le message part
+  // vers SON WhatsApp ; sinon on retombe sur le numéro global du site (anciens produits).
+  const numero = (produit.Vendeur && produit.Vendeur.whatsapp) || CONFIG.WHATSAPP_NUMBER;
   const lignes = [
     `Bonjour, je souhaite commander :`,
     `Produit : ${produit.Nom}`,
@@ -242,7 +245,11 @@ function buildWhatsappLink(produit, options = {}) {
     `Quantité : ${quantite}`,
     `Lien : ${window.location.origin}${window.location.pathname}#/produit?id=${produit.ID}`
   ];
-  return `https://wa.me/${CONFIG.WHATSAPP_NUMBER}?text=${encodeURIComponent(lignes.join("\n"))}`;
+  return `https://wa.me/${numero}?text=${encodeURIComponent(lignes.join("\n"))}`;
+}
+
+function getProduitEmail(produit) {
+  return (produit.Vendeur && produit.Vendeur.email) || CONFIG.CONTACT_EMAIL;
 }
 
 function escapeHtml(str) {
@@ -372,7 +379,7 @@ function Layout(activePath) {
         <div><h4>Collection D'Or</h4><p>L'élégance à chaque pas. Créations artisanales faites main en Haïti.</p></div>
         <div><h4>Navigation</h4><ul><li><a href="#/collection">Collection</a></li><li><a href="#/a-propos">À propos</a></li><li><a href="#/contact">Contact</a></li></ul></div>
         <div><h4>Informations</h4><ul><li><a href="#/faq">FAQ</a></li></ul></div>
-        <div><h4>Contact</h4><ul><li><a href="https://wa.me/${CONFIG.WHATSAPP_NUMBER}" target="_blank">WhatsApp</a></li><li><a href="mailto:${CONFIG.CONTACT_EMAIL}">Email</a></li></ul></div>
+        <div><h4>Contact</h4><ul><li><a href="https://wa.me/${CONFIG.WHATSAPP_NUMBER}" target="_blank">WhatsApp</a></li><li><a href="mailto:${CONFIG.CONTACT_EMAIL}">Email</a></li><li><a href="#/vendeur">Espace vendeur</a></li></ul></div>
       </div>
       <div class="footer-bottom">© ${new Date().getFullYear()} La Collection Dorée — Tous droits réservés.</div>
     </div>
@@ -665,7 +672,7 @@ Router.add('/produit', { title: '/produit', render: async (params) => {
     document.getElementById('btn-email').addEventListener('click', () => {
       const sujet = encodeURIComponent(`Commande — ${produit.Nom}`);
       const corps = encodeURIComponent(`Bonjour,\n\nJe souhaite commander :\nProduit : ${produit.Nom}\nRéférence : ${produit.Reference}\nQuantité : ${quantite}\nPrix : ${formatPrice(produit.Prix)}\n\nMerci.`);
-      window.location.href = `mailto:${CONFIG.CONTACT_EMAIL}?subject=${sujet}&body=${corps}`;
+      window.location.href = `mailto:${getProduitEmail(produit)}?subject=${sujet}&body=${corps}`;
     });
     document.getElementById('btn-partager').addEventListener('click', () => sharerProduit(produit, produit.ID));
 
@@ -1406,6 +1413,517 @@ Router.add('/admin', { title: '/admin', render: () => {
       feedback.textContent = res.error || "Erreur lors de l'enregistrement.";
     }
   });
+}});
+
+/* ----- Espace vendeur (tableau de bord scopé à un vendeur) ----- */
+Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = localStorage.getItem('lcd_vendeur_token') || null;
+  let vendeurInfo = JSON.parse(localStorage.getItem('lcd_vendeur_info') || 'null');
+
+  document.getElementById('view').innerHTML = `
+    <div class="container">
+      <div class="login-shell glass" id="vendeur-login-shell" style="padding:40px">
+        <h2 style="text-align:center;margin-bottom:24px">Espace vendeur</h2>
+        <form id="vendeur-login-form" style="display:grid;gap:14px">
+          <input type="email" id="vendeur-login-email" placeholder="Email de la boutique" required class="field-input">
+          <input type="password" id="vendeur-login-password" placeholder="Mot de passe" required class="field-input">
+          <button type="submit" class="btn btn-primary">Se connecter</button>
+          <p id="vendeur-login-error" style="color:#e0554f;font-size:0.85rem"></p>
+        </form>
+      </div>
+
+      <div id="vendeur-shell" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0">
+          <h2 id="vendeur-boutique-nom" style="font-size:1.4rem"></h2>
+          <button class="btn btn-outline" id="vendeur-logout-btn">Déconnexion</button>
+        </div>
+        <div class="tab-buttons">
+          <button class="active" data-tab="v-apercu">Aperçu</button>
+          <button data-tab="v-produits">Produits</button>
+          <button data-tab="v-ajouter">Ajouter un produit</button>
+          <button data-tab="v-commandes">Commandes</button>
+          <button data-tab="v-messages">Messages</button>
+          <button data-tab="v-profil">Ma boutique</button>
+        </div>
+
+        <div class="tab-panel active" id="tab-v-apercu">
+          <div id="v-kpi-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:20px 0"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px" id="v-dashboard-tables">
+            <div class="glass" style="padding:18px;border-radius:var(--radius)">
+              <h4 style="color:#e0554f;font-weight:500;margin-bottom:10px;font-size:0.85rem">⚠ Rupture de stock</h4>
+              <div id="v-liste-rupture" style="font-size:0.82rem;color:var(--gris-texte)"></div>
+            </div>
+            <div class="glass" style="padding:18px;border-radius:var(--radius)">
+              <h4 style="color:var(--or);font-weight:500;margin-bottom:10px;font-size:0.85rem">Dernières commandes</h4>
+              <div id="v-liste-commandes" style="font-size:0.82rem;color:var(--gris-texte)"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="tab-v-produits">
+          <table class="admin-table">
+            <thead><tr><th>Photo</th><th>Nom</th><th>Catégorie</th><th>Prix</th><th>Stock</th><th>Statut</th><th>Actions</th></tr></thead>
+            <tbody id="v-produits-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="tab-panel" id="tab-v-ajouter">
+          <h3 id="v-form-title">Nouveau produit</h3>
+          <form id="v-produit-form" class="form-grid">
+            <input type="hidden" name="id">
+            <div><label>Nom du produit *</label><input type="text" name="nom" required class="field-input"></div>
+            <div><label>Référence</label><input type="text" name="reference" placeholder="Générée automatiquement si vide" class="field-input"></div>
+            <div><label>Prix *</label><input type="number" name="prix" step="0.01" required class="field-input"></div>
+            <div><label>Prix promotionnel</label><input type="number" name="prixPromo" step="0.01" class="field-input"></div>
+            <div><label>Catégorie *</label><input type="text" name="categorie" required placeholder="Ex: Sandales femme" class="field-input"></div>
+            <div><label>Stock</label><input type="number" name="stock" value="1" class="field-input"></div>
+            <div class="full-row"><label>Description</label><textarea name="description" rows="3" class="field-input"></textarea></div>
+            <div class="full-row"><label>Caractéristiques</label><input type="text" name="caracteristiques" placeholder="Fait main, cuir véritable, ..." class="field-input"></div>
+            <div class="full-row">
+              <label>Photos du produit *</label>
+              <input type="file" id="v-photo-input" accept="image/*" multiple style="display:none">
+              <div id="v-upload-zone" style="border:2px dashed rgba(212,175,55,0.3);border-radius:var(--radius);padding:28px;text-align:center;cursor:pointer" onclick="document.getElementById('v-photo-input').click()">
+                <p style="color:var(--gris-texte);font-size:0.9rem">Clique ou glisse tes photos ici</p>
+                <p style="color:var(--or);font-size:0.78rem;margin-top:6px">JPG, PNG, WEBP — plusieurs photos possibles</p>
+              </div>
+              <div id="v-photos-preview" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px"></div>
+              <div id="v-upload-progress" style="color:var(--or-clair);font-size:0.82rem;margin-top:8px"></div>
+              <input type="hidden" name="photos" id="v-photos-hidden">
+            </div>
+
+            <div class="full-row" style="margin-top:4px">
+              <button type="button" id="v-btn-ia-generer" class="btn btn-primary" style="background:linear-gradient(135deg,var(--or),var(--or-clair));display:inline-flex;align-items:center;gap:8px">
+                ✨ Générer avec l'IA
+              </button>
+              <span style="color:var(--gris-texte);font-size:0.8rem;margin-left:10px">Importe au moins une photo, puis clique ici pour pré-remplir la fiche.</span>
+              <div id="v-ia-panel" style="display:none;margin-top:16px;border:1px solid rgba(212,175,55,0.3);border-radius:var(--radius);padding:18px;background:rgba(212,175,55,0.05)">
+                <h4 style="color:var(--or);font-weight:500;margin-bottom:10px;font-size:0.9rem">Analyse IA</h4>
+                <div id="v-ia-status" style="color:var(--gris-texte);font-size:0.85rem;margin-bottom:10px">Analyse en cours...</div>
+                <div style="width:100%;height:6px;border-radius:3px;background:rgba(212,175,55,0.15);overflow:hidden;margin-bottom:12px">
+                  <div id="v-ia-progress-bar" style="height:100%;width:30%;background:linear-gradient(90deg,var(--or),var(--or-clair));animation:iaProgressAnim 1.2s ease-in-out infinite"></div>
+                </div>
+                <div id="v-ia-resultat" style="font-size:0.85rem;color:var(--gris-texte)"></div>
+              </div>
+            </div>
+
+            <div><label><input type="checkbox" name="disponible" checked style="width:auto;margin-right:8px">Disponible</label></div>
+            <div><label><input type="checkbox" name="vedette" style="width:auto;margin-right:8px">Produit vedette</label></div>
+
+            <fieldset class="full-row" style="border:1px solid rgba(212,175,55,0.2);border-radius:var(--radius);padding:14px 16px;margin-top:6px">
+              <legend style="color:var(--or);font-size:0.85rem;padding:0 6px">Détails avancés &amp; SEO (générés par l'IA, modifiables)</legend>
+              <div class="form-grid" style="margin-top:8px">
+                <div><label>Sous-catégorie</label><input type="text" name="sousCategorie" class="field-input"></div>
+                <div><label>Style</label><input type="text" name="style" class="field-input"></div>
+                <div><label>Couleurs principales</label><input type="text" name="couleurs" class="field-input"></div>
+                <div><label>Matière probable</label><input type="text" name="matiere" class="field-input"></div>
+                <div><label>Public cible</label><input type="text" name="publicCible" class="field-input"></div>
+                <div><label>Tags</label><input type="text" name="tags" class="field-input" placeholder="séparés par des virgules"></div>
+                <div class="full-row"><label>Mots-clés SEO</label><input type="text" name="motsClesSEO" class="field-input" placeholder="séparés par des virgules"></div>
+                <div><label>Meta Titre</label><input type="text" name="metaTitre" class="field-input" maxlength="60"></div>
+                <div><label>Meta Description</label><input type="text" name="metaDescription" class="field-input" maxlength="160"></div>
+              </div>
+              <input type="hidden" name="donneesMarketingIA" id="v-donnees-marketing-ia">
+            </fieldset>
+
+            <div class="full-row">
+              <button type="submit" class="btn btn-primary">Enregistrer le produit</button>
+              <button type="button" id="v-cancel-edit" class="btn btn-outline" style="display:none;margin-left:10px">Annuler la modification</button>
+            </div>
+            <p id="v-form-feedback" class="full-row" style="color:var(--or-clair)"></p>
+          </form>
+        </div>
+
+        <div class="tab-panel" id="tab-v-commandes">
+          <table class="admin-table">
+            <thead><tr><th>Date</th><th>Client</th><th>Téléphone</th><th>Produit</th><th>Qté</th><th>Total</th><th>Statut</th></tr></thead>
+            <tbody id="v-commandes-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="tab-panel" id="tab-v-messages">
+          <table class="admin-table">
+            <thead><tr><th>Date</th><th>Nom</th><th>Contact</th><th>Message</th></tr></thead>
+            <tbody id="v-messages-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="tab-panel" id="tab-v-profil">
+          <h3 style="margin-bottom:16px">Informations de la boutique</h3>
+          <p style="color:var(--gris-texte);font-size:0.82rem;margin-bottom:16px">
+            Le plan et le statut de ton compte sont gérés par la plateforme, pas modifiables ici.
+          </p>
+          <form id="v-profil-form" class="form-grid">
+            <div><label>Nom complet</label><input type="text" name="nom" class="field-input"></div>
+            <div><label>Nom de la boutique</label><input type="text" name="boutique" required class="field-input"></div>
+            <div><label>Téléphone</label><input type="tel" name="telephone" class="field-input"></div>
+            <div><label>WhatsApp (avec indicatif, ex: 18291234567)</label><input type="text" name="whatsapp" class="field-input"></div>
+            <div class="full-row"><label>Adresse</label><input type="text" name="adresse" class="field-input"></div>
+            <div><label>URL du logo</label><input type="url" name="logo" class="field-input"></div>
+            <div><label>URL de la bannière</label><input type="url" name="banniere" class="field-input"></div>
+            <div class="full-row"><label>Description de la boutique</label><textarea name="description" rows="3" class="field-input"></textarea></div>
+            <div class="full-row">
+              <button type="submit" class="btn btn-primary">Enregistrer</button>
+              <span id="v-profil-lien" style="margin-left:14px;font-size:0.85rem;color:var(--gris-texte)"></span>
+            </div>
+            <p id="v-profil-feedback" class="full-row" style="color:var(--or-clair)"></p>
+          </form>
+        </div>
+      </div>
+    </div>`;
+
+  function showVendeurDashboard() {
+    document.getElementById('vendeur-login-shell').style.display = 'none';
+    document.getElementById('vendeur-shell').style.display = 'block';
+    document.getElementById('vendeur-boutique-nom').textContent = vendeurInfo ? vendeurInfo.boutique : 'Ma boutique';
+    remplirProfilForm();
+    chargerApercuVendeur();
+    chargerProduitsVendeur();
+    chargerCommandesVendeur();
+    chargerMessagesVendeur();
+  }
+  if (vendeurToken && vendeurInfo) showVendeurDashboard();
+
+  document.getElementById('vendeur-login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('vendeur-login-email').value;
+    const motDePasse = document.getElementById('vendeur-login-password').value;
+    const res = await API.post('vendeurLogin', { email, motDePasse });
+    if (res.token) {
+      vendeurToken = res.token; vendeurInfo = res.vendeur;
+      localStorage.setItem('lcd_vendeur_token', vendeurToken);
+      localStorage.setItem('lcd_vendeur_info', JSON.stringify(vendeurInfo));
+      showVendeurDashboard();
+    } else {
+      document.getElementById('vendeur-login-error').textContent = res.error || 'Erreur de connexion.';
+    }
+  });
+
+  document.getElementById('vendeur-logout-btn').addEventListener('click', async () => {
+    try { await API.post('vendeurLogout', {}, vendeurToken); } catch (e) {}
+    vendeurToken = null; vendeurInfo = null;
+    localStorage.removeItem('lcd_vendeur_token'); localStorage.removeItem('lcd_vendeur_info');
+    renderRoute();
+  });
+
+  document.querySelectorAll('#vendeur-shell .tab-buttons button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#vendeur-shell .tab-buttons button').forEach(b=>b.classList.remove('active'));
+      document.querySelectorAll('#vendeur-shell .tab-panel').forEach(p=>p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  function remplirProfilForm() {
+    if (!vendeurInfo) return;
+    const form = document.getElementById('v-profil-form');
+    form.nom.value = vendeurInfo.nom || ''; form.boutique.value = vendeurInfo.boutique || '';
+    form.telephone.value = vendeurInfo.telephone || ''; form.whatsapp.value = vendeurInfo.whatsapp || '';
+    form.adresse.value = vendeurInfo.adresse || ''; form.logo.value = vendeurInfo.logo || '';
+    form.banniere.value = vendeurInfo.banniere || ''; form.description.value = vendeurInfo.description || '';
+    document.getElementById('v-profil-lien').innerHTML = vendeurInfo.slug
+      ? `Page publique : <a href="#/boutique?slug=${vendeurInfo.slug}" target="_blank" style="color:var(--or)">#/boutique?slug=${vendeurInfo.slug}</a>` : '';
+  }
+
+  document.getElementById('v-profil-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const data = { nom: form.nom.value, boutique: form.boutique.value, telephone: form.telephone.value,
+      whatsapp: form.whatsapp.value, adresse: form.adresse.value, logo: form.logo.value,
+      banniere: form.banniere.value, description: form.description.value };
+    const res = await API.post('vendeurModifier', data, vendeurToken);
+    const feedback = document.getElementById('v-profil-feedback');
+    if (res.success) {
+      feedback.style.color = 'var(--or-clair)'; feedback.textContent = 'Profil mis à jour.';
+      Object.assign(vendeurInfo, data);
+      localStorage.setItem('lcd_vendeur_info', JSON.stringify(vendeurInfo));
+      document.getElementById('vendeur-boutique-nom').textContent = vendeurInfo.boutique;
+    } else {
+      feedback.style.color = '#e0554f'; feedback.textContent = res.error || 'Erreur lors de la mise à jour.';
+    }
+  });
+
+  async function chargerApercuVendeur() {
+    const { produits, error: errP } = await API.get({ action: 'produits', vendeurId: vendeurInfo.id });
+    const { commandes, error: errC } = await API.get({ action: 'commandes', token: vendeurToken });
+    const grid = document.getElementById('v-kpi-grid');
+    if (errP || errC) { grid.innerHTML = `<p style="color:#e0554f">Erreur de chargement.</p>`; return; }
+    const ruptures = produits.filter(p => Number(p.Stock) <= 0);
+    const aujourdHui = new Date().toDateString();
+    const commandesJour = commandes.filter(c => new Date(c.Date).toDateString() === aujourdHui);
+    const kpis = [
+      { label: 'Produits', valeur: produits.length },
+      { label: 'En rupture', valeur: ruptures.length },
+      { label: 'Commandes (total)', valeur: commandes.length },
+      { label: "Commandes aujourd'hui", valeur: commandesJour.length }
+    ];
+    grid.innerHTML = kpis.map(k => `
+      <div class="glass" style="padding:18px;border-radius:var(--radius);text-align:center">
+        <div style="font-size:1.8rem;color:var(--or);font-family:var(--font-display)">${k.valeur}</div>
+        <div style="color:var(--gris-texte);font-size:0.8rem;margin-top:4px">${k.label}</div>
+      </div>`).join('');
+    document.getElementById('v-liste-rupture').innerHTML = ruptures.length
+      ? ruptures.map(p => `<div style="padding:6px 0;border-bottom:1px solid rgba(212,175,55,0.08)">${escapeHtml(p.Nom)}</div>`).join('')
+      : 'Aucun produit en rupture.';
+    document.getElementById('v-liste-commandes').innerHTML = commandes.slice(0,5).length
+      ? commandes.slice(0,5).map(c => `<div style="padding:6px 0;border-bottom:1px solid rgba(212,175,55,0.08)">${escapeHtml(c.NomClient)} — ${escapeHtml(c.ProduitNom)} ×${c.Quantite}</div>`).join('')
+      : 'Aucune commande pour le moment.';
+  }
+
+  async function chargerProduitsVendeur() {
+    const tbody = document.getElementById('v-produits-tbody');
+    tbody.innerHTML = '<tr><td colspan="7">Chargement...</td></tr>';
+    const { produits, error } = await API.get({ action: 'produits', vendeurId: vendeurInfo.id });
+    if (error) { tbody.innerHTML = `<tr><td colspan="7">${error}</td></tr>`; return; }
+    if (!produits.length) { tbody.innerHTML = '<tr><td colspan="7">Aucun produit. Ajoutez-en un dans l\u2019onglet "Ajouter un produit".</td></tr>'; return; }
+    tbody.innerHTML = produits.map(p => `
+      <tr>
+        <td>${(p.Photos&&p.Photos[0])?`<img src="${p.Photos[0]}" style="width:46px;height:46px;object-fit:cover;border-radius:4px">`:''}</td>
+        <td>${escapeHtml(p.Nom)}</td><td>${escapeHtml(p.Categorie||'')}</td><td>${formatPrice(p.Prix)}</td><td>${p.Stock}</td><td>${p.Disponible?'Disponible':'Masqué'}</td>
+        <td><span class="action-link" data-edit="${p.ID}">Modifier</span><span class="action-link" data-delete="${p.ID}" style="color:#e0554f">Supprimer</span></td>
+      </tr>`).join('');
+    tbody.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => editerProduitVendeur(produits.find(p=>p.ID===el.dataset.edit))));
+    tbody.querySelectorAll('[data-delete]').forEach(el => el.addEventListener('click', () => supprimerProduitVendeur(el.dataset.delete)));
+  }
+
+  async function chargerCommandesVendeur() {
+    const tbody = document.getElementById('v-commandes-tbody');
+    tbody.innerHTML = '<tr><td colspan="7">Chargement...</td></tr>';
+    const { commandes, error } = await API.get({ action: 'commandes', token: vendeurToken });
+    if (error) { tbody.innerHTML = `<tr><td colspan="7">${error}</td></tr>`; return; }
+    if (!commandes.length) { tbody.innerHTML = '<tr><td colspan="7">Aucune commande pour le moment.</td></tr>'; return; }
+    tbody.innerHTML = commandes.map(c => `
+      <tr>
+        <td>${new Date(c.Date).toLocaleDateString('fr-FR')}</td><td>${escapeHtml(c.NomClient)}</td><td>${escapeHtml(c.Telephone||'')}</td>
+        <td>${escapeHtml(c.ProduitNom)}</td><td>${c.Quantite}</td><td>${formatPrice(c.Total)}</td><td>${escapeHtml(c.Statut||'')}</td>
+      </tr>`).join('');
+  }
+
+  async function chargerMessagesVendeur() {
+    const tbody = document.getElementById('v-messages-tbody');
+    tbody.innerHTML = '<tr><td colspan="4">Chargement...</td></tr>';
+    const { messages, error } = await API.get({ action: 'messages', token: vendeurToken });
+    if (error) { tbody.innerHTML = `<tr><td colspan="4">${error}</td></tr>`; return; }
+    if (!messages.length) { tbody.innerHTML = '<tr><td colspan="4">Aucun message pour le moment.</td></tr>'; return; }
+    tbody.innerHTML = messages.map(m => `
+      <tr>
+        <td>${new Date(m.Date).toLocaleDateString('fr-FR')}</td><td>${escapeHtml(m.Nom)}</td>
+        <td>${escapeHtml(m.Email||m.Telephone||'')}</td><td>${escapeHtml(m.Message)}</td>
+      </tr>`).join('');
+  }
+
+  /* ---- Upload photos + IA (identique en logique à /admin, scopé au token vendeur) ---- */
+  let items = [], uploadedUrls = [];
+  const photoInput = document.getElementById('v-photo-input');
+  const uploadZone = document.getElementById('v-upload-zone');
+  const preview = document.getElementById('v-photos-preview');
+  const progress = document.getElementById('v-upload-progress');
+
+  function updateHidden() { document.getElementById('v-photos-hidden').value = uploadedUrls.join(','); }
+  function refreshPreview() {
+    preview.innerHTML = items.map((it,i) => `
+      <div style="position:relative;width:70px;height:70px">
+        <img src="${it.localSrc}" style="width:100%;height:100%;object-fit:cover;border-radius:4px;${it.status!=='done'?'opacity:0.5':''}">
+        ${it.status==='uploading'?'<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);color:#fff;font-size:0.7rem">...</div>':''}
+        ${it.status==='error'?'<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(224,85,79,0.7);color:#fff;font-size:1rem">!</div>':''}
+        <button type="button" data-remove="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:#e0554f;color:#fff;font-size:0.7rem;line-height:1">×</button>
+      </div>`).join('');
+    preview.querySelectorAll('[data-remove]').forEach(btn => btn.addEventListener('click', () => {
+      const i = Number(btn.dataset.remove);
+      items.splice(i,1); uploadedUrls = items.filter(it=>it.status==='done').map(it=>it.url);
+      updateHidden(); refreshPreview();
+    }));
+  }
+
+  async function uploaderFichier(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', CONFIG.CLOUDINARY_UPLOAD_PRESET);
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${CONFIG.CLOUDINARY_CLOUD_NAME}/image/upload`, { method:'POST', body: formData });
+    if (!res.ok) throw new Error('Échec upload');
+    const data = await res.json();
+    return data.secure_url;
+  }
+
+  async function gererFichiers(fileList) {
+    const nouveaux = Array.from(fileList).map(file => ({ localSrc: URL.createObjectURL(file), status:'uploading', url:null, error:null, name:file.name, file }));
+    items.push(...nouveaux); refreshPreview();
+    for (const it of nouveaux) {
+      try { it.url = await uploaderFichier(it.file); it.status = 'done'; }
+      catch (e) { it.status = 'error'; it.error = e.message; }
+      uploadedUrls = items.filter(x=>x.status==='done').map(x=>x.url);
+      updateHidden(); refreshPreview();
+    }
+  }
+
+  photoInput.addEventListener('change', (e) => gererFichiers(e.target.files));
+  uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.style.borderColor = 'var(--or)'; });
+  uploadZone.addEventListener('dragleave', () => { uploadZone.style.borderColor = 'rgba(212,175,55,0.3)'; });
+  uploadZone.addEventListener('drop', (e) => { e.preventDefault(); uploadZone.style.borderColor = 'rgba(212,175,55,0.3)'; gererFichiers(e.dataTransfer.files); });
+
+  function editerProduitVendeur(p) {
+    const form = document.getElementById('v-produit-form');
+    document.getElementById('v-form-title').textContent = 'Modifier le produit';
+    document.getElementById('v-cancel-edit').style.display = 'inline-block';
+    form.id.value = p.ID; form.nom.value = p.Nom; form.reference.value = p.Reference || '';
+    form.prix.value = p.Prix; form.prixPromo.value = p.PrixPromo || ''; form.categorie.value = p.Categorie || '';
+    form.stock.value = p.Stock; form.description.value = p.Description || ''; form.caracteristiques.value = p.Caracteristiques || '';
+    form.disponible.checked = !!p.Disponible; form.vedette.checked = !!p.Vedette;
+    form.sousCategorie.value = p.SousCategorie || ''; form.style.value = p.Style || ''; form.couleurs.value = p.Couleurs || '';
+    form.matiere.value = p.Matiere || ''; form.publicCible.value = p.PublicCible || ''; form.tags.value = p.Tags || '';
+    form.motsClesSEO.value = p.MotsClesSEO || ''; form.metaTitre.value = p.MetaTitre || ''; form.metaDescription.value = p.MetaDescription || '';
+    document.getElementById('v-donnees-marketing-ia').value = p.DonneesMarketingIA || '';
+    items = (p.Photos || []).map(url => ({ localSrc:url, status:'done', url, error:null, name:'', file:null }));
+    uploadedUrls = items.map(it => it.url);
+    updateHidden(); refreshPreview();
+    document.querySelector('#vendeur-shell .tab-buttons [data-tab="v-ajouter"]').click();
+  }
+
+  async function supprimerProduitVendeur(id) {
+    if (!confirm('Supprimer ce produit ?')) return;
+    const res = await API.post('produitSupprimer', { id }, vendeurToken);
+    if (res.success) { chargerProduitsVendeur(); chargerApercuVendeur(); }
+    else alert(res.error || 'Erreur lors de la suppression.');
+  }
+
+  document.getElementById('v-cancel-edit').addEventListener('click', () => {
+    items = []; uploadedUrls = []; updateHidden(); refreshPreview(); progress.textContent = '';
+    document.getElementById('v-ia-panel').style.display = 'none';
+  });
+
+  const btnIaGenerer = document.getElementById('v-btn-ia-generer');
+  const iaPanel = document.getElementById('v-ia-panel');
+  const iaStatus = document.getElementById('v-ia-status');
+  const iaResultat = document.getElementById('v-ia-resultat');
+
+  function afficherResultatIAVendeur(fiche) {
+    const form = document.getElementById('v-produit-form');
+    if (fiche.nom) form.nom.value = fiche.nom;
+    if (fiche.descriptionComplete) form.description.value = fiche.descriptionComplete;
+    if (fiche.categorie) form.categorie.value = fiche.categorie;
+    if (fiche.sousCategorie) form.sousCategorie.value = fiche.sousCategorie;
+    if (fiche.style) form.style.value = fiche.style;
+    if (fiche.couleurs) form.couleurs.value = fiche.couleurs;
+    if (fiche.matiere) form.matiere.value = fiche.matiere;
+    if (fiche.publicCible) form.publicCible.value = fiche.publicCible;
+    if (fiche.tags) form.tags.value = fiche.tags;
+    if (fiche.motsClesSEO) form.motsClesSEO.value = fiche.motsClesSEO;
+    if (fiche.metaTitre) form.metaTitre.value = fiche.metaTitre;
+    if (fiche.metaDescription) form.metaDescription.value = fiche.metaDescription;
+    if (fiche.utilisation) form.caracteristiques.value = (form.caracteristiques.value?form.caracteristiques.value+' — ':'') + 'Utilisation : ' + fiche.utilisation;
+
+    document.getElementById('v-donnees-marketing-ia').value = JSON.stringify({
+      descriptionCourte: fiche.descriptionCourte || '', hashtagsInstagram: fiche.hashtagsInstagram || '',
+      hashtagsFacebook: fiche.hashtagsFacebook || '', messageWhatsapp: fiche.messageWhatsapp || '',
+      publicationFacebook: fiche.publicationFacebook || '', publicationInstagram: fiche.publicationInstagram || '',
+      ideesVenteCroisee: fiche.ideesVenteCroisee || '', traductions: fiche.traductions || {},
+      niveauConfiance: fiche.niveauConfiance || '', elementsAVerifier: fiche.elementsAVerifier || []
+    });
+
+    const alerte = fiche.niveauConfiance === 'basse' ? `<p style="color:#e0554f;margin-bottom:8px">⚠ Confiance basse : relis chaque champ.</p>` : '';
+    const aVerifier = (fiche.elementsAVerifier||[]).length ? `<p><strong>À vérifier :</strong> ${fiche.elementsAVerifier.map(escapeHtml).join(', ')}</p>` : '';
+    iaResultat.innerHTML = `${alerte}<p style="margin-bottom:8px">Formulaire pré-rempli — relis avant d'enregistrer.</p>${aVerifier}`;
+  }
+
+  btnIaGenerer.addEventListener('click', async () => {
+    if (!uploadedUrls.length) {
+      iaPanel.style.display = 'block'; iaStatus.style.color = '#e0554f';
+      iaStatus.textContent = "Ajoute au moins une photo avant de lancer l'analyse IA.";
+      document.getElementById('v-ia-progress-bar').style.display = 'none'; iaResultat.innerHTML = '';
+      return;
+    }
+    const form = document.getElementById('v-produit-form');
+    iaPanel.style.display = 'block'; iaStatus.style.color = 'var(--gris-texte)'; iaStatus.textContent = 'Analyse en cours...';
+    document.getElementById('v-ia-progress-bar').style.display = 'block'; iaResultat.innerHTML = '';
+    btnIaGenerer.disabled = true; btnIaGenerer.style.opacity = '0.6';
+    try {
+      const res = await API.post('genererFicheIA', { photos: uploadedUrls, prix: form.prix.value, stock: form.stock.value }, vendeurToken);
+      if (res.error) {
+        iaStatus.style.color = '#e0554f'; iaStatus.textContent = res.error;
+        document.getElementById('v-ia-progress-bar').style.display = 'none';
+      } else if (res.success && res.fiche) {
+        iaStatus.style.color = 'var(--or-clair)'; iaStatus.textContent = 'Analyse terminée.';
+        document.getElementById('v-ia-progress-bar').style.display = 'none';
+        afficherResultatIAVendeur(res.fiche);
+      }
+    } catch (err) {
+      iaStatus.style.color = '#e0554f'; iaStatus.textContent = "Erreur réseau : " + err.message;
+      document.getElementById('v-ia-progress-bar').style.display = 'none';
+    } finally {
+      btnIaGenerer.disabled = false; btnIaGenerer.style.opacity = '1';
+    }
+  });
+
+  document.getElementById('v-produit-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const data = {
+      id: form.id.value || undefined, nom: form.nom.value, reference: form.reference.value,
+      prix: form.prix.value, prixPromo: form.prixPromo.value, categorie: form.categorie.value,
+      stock: form.stock.value, description: form.description.value, caracteristiques: form.caracteristiques.value,
+      photos: uploadedUrls.length ? uploadedUrls : form.photos.value.split(',').map(s=>s.trim()).filter(Boolean),
+      disponible: form.disponible.checked, vedette: form.vedette.checked,
+      sousCategorie: form.sousCategorie.value, style: form.style.value, couleurs: form.couleurs.value,
+      matiere: form.matiere.value, publicCible: form.publicCible.value, tags: form.tags.value,
+      motsClesSEO: form.motsClesSEO.value, metaTitre: form.metaTitre.value, metaDescription: form.metaDescription.value,
+      donneesMarketingIA: form.donneesMarketingIA.value
+    };
+    const action = data.id ? 'produitModifier' : 'produitCreer';
+    const res = await API.post(action, data, vendeurToken);
+    const feedback = document.getElementById('v-form-feedback');
+    if (res.success) {
+      feedback.style.color = 'var(--or-clair)'; feedback.textContent = 'Produit enregistré avec succès.';
+      form.reset(); form.id.value = '';
+      document.getElementById('v-form-title').textContent = 'Nouveau produit';
+      document.getElementById('v-cancel-edit').style.display = 'none';
+      document.getElementById('v-ia-panel').style.display = 'none';
+      items = []; uploadedUrls = []; updateHidden(); refreshPreview();
+      chargerProduitsVendeur(); chargerApercuVendeur();
+    } else {
+      feedback.style.color = '#e0554f'; feedback.textContent = res.error || "Erreur lors de l'enregistrement.";
+    }
+  });
+}});
+
+/* ----- Boutique publique (/boutique?slug=...) ----- */
+Router.add('/boutique', { title: '/boutique', render: async (params) => {
+  const slug = params.get('slug');
+  const view = document.getElementById('view');
+  view.innerHTML = `<div class="container" style="padding:40px 0"><div class="skeleton" style="height:200px;margin-bottom:20px"></div><div id="boutique-produits" class="products-grid"></div></div>`;
+  if (!slug) { view.innerHTML = '<div class="container"><p class="empty-state">Boutique non spécifiée.</p></div>'; return; }
+
+  try {
+    const { vendeur, error } = await API.get({ action: 'vendeurPublic', slug });
+    if (error || !vendeur) throw new Error(error || 'introuvable');
+    document.getElementById('page-title').textContent = `${vendeur.Boutique} — La Collection Dorée`;
+
+    const { produits } = await API.get({ action: 'produits', vendeurId: vendeur.ID });
+    const byId = {}; (produits||[]).forEach(p => byId[p.ID] = p);
+
+    view.innerHTML = `
+      <div style="background:${vendeur.Banniere?`url(${vendeur.Banniere}) center/cover`:'var(--noir-soft)'};height:220px;display:flex;align-items:flex-end">
+        <div class="container" style="display:flex;align-items:center;gap:16px;padding-bottom:20px">
+          ${vendeur.Logo?`<img src="${vendeur.Logo}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;border:2px solid var(--or)">`:''}
+          <div>
+            <h1 style="font-size:1.8rem">${escapeHtml(vendeur.Boutique)}</h1>
+            <p style="color:var(--gris-texte);font-size:0.9rem">${escapeHtml(vendeur.Adresse||'')}</p>
+          </div>
+        </div>
+      </div>
+      <div class="container" style="padding:30px 0">
+        ${vendeur.Description?`<p style="color:var(--gris-texte);margin-bottom:20px;max-width:700px">${escapeHtml(vendeur.Description)}</p>`:''}
+        <div style="display:flex;gap:12px;margin-bottom:30px">
+          ${vendeur.Whatsapp?`<a href="https://wa.me/${vendeur.Whatsapp}" target="_blank" class="btn btn-whatsapp">WhatsApp</a>`:''}
+          ${vendeur.Email?`<a href="mailto:${vendeur.Email}" class="btn btn-outline">Email</a>`:''}
+        </div>
+        <div id="boutique-produits" class="products-grid">
+          ${(produits&&produits.length) ? produits.map(renderProductCard).join('') : '<p class="empty-state">Aucun produit publié pour le moment.</p>'}
+        </div>
+      </div>`;
+    const grid = document.getElementById('boutique-produits');
+    if (grid) bindProductGridEvents(grid, byId);
+  } catch (e) {
+    view.innerHTML = '<div class="container"><p class="empty-state">Boutique introuvable ou indisponible.</p></div>';
+  }
 }});
 </script>
 </body>
