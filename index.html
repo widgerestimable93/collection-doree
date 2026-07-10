@@ -339,6 +339,25 @@ function parseHash() {
 
 window.addEventListener('hashchange', renderRoute);
 window.addEventListener('DOMContentLoaded', renderRoute);
+window.addEventListener('DOMContentLoaded', enregistrerVisiteSiPremiereFois);
+
+/**
+ * Enregistre UNE visite quand le visiteur ouvre le site (lien public GitHub Pages),
+ * pas à chaque navigation interne. sessionStorage évite de recompter la même
+ * personne qui navigue entre les pages dans le même onglet — mais si elle revient
+ * plus tard ou dans un autre onglet, ce sera une nouvelle visite comptée (ce n'est
+ * pas un compteur de visiteurs uniques garantis, voir limite expliquée à l'utilisateur).
+ */
+function enregistrerVisiteSiPremiereFois() {
+  if (sessionStorage.getItem('lcd_visite_loggee')) return;
+  sessionStorage.setItem('lcd_visite_loggee', '1');
+  API.post('log', {
+    type: 'Visite',
+    route: window.location.hash || '#/',
+    referrer: document.referrer || '',
+    userAgent: navigator.userAgent
+  }).catch(() => {}); // une visite non comptée ne doit jamais bloquer ou alerter le visiteur
+}
 
 function navigate(path) { window.location.hash = path; }
 
@@ -974,8 +993,9 @@ Router.add('/admin', { title: '/admin', render: () => {
     try {
       await loadChartJs();
       const data = await API.get({ action: 'statistiques', token: adminToken });
+      const visites = await API.get({ action: 'statistiquesVisites', token: adminToken });
       if (data.error) { loadingEl.textContent = data.error; return; }
-      renderKpis(data.kpis);
+      renderKpis(data.kpis, visites.error ? null : visites);
       renderChartCommandes(data.commandesParJour);
       renderChartCategories(data.parCategorie);
       renderChartVues(data.plusConsultes);
@@ -991,7 +1011,7 @@ Router.add('/admin', { title: '/admin', render: () => {
     }
   }
 
-  function renderKpis(kpis) {
+  function renderKpis(kpis, visites) {
     const cartes = [
       { label: 'Produits', valeur: kpis.totalProduits },
       { label: 'Commandes', valeur: kpis.totalCommandes },
@@ -1001,6 +1021,10 @@ Router.add('/admin', { title: '/admin', render: () => {
       { label: 'Messages non lus', valeur: kpis.messagesNonLus, alerte: kpis.messagesNonLus > 0 },
       { label: 'Ruptures de stock', valeur: kpis.produitsRupture, alerte: kpis.produitsRupture > 0 }
     ];
+    if (visites) {
+      cartes.push({ label: 'Visiteurs aujourd\u2019hui', valeur: visites.aujourdHui });
+      cartes.push({ label: 'Visiteurs (total)', valeur: visites.total });
+    }
     document.getElementById('kpi-grid').innerHTML = cartes.map(c => `
       <div class="glass" style="padding:18px;border-radius:var(--radius);text-align:center">
         <div style="font-size:1.6rem;font-weight:500;color:${c.alerte ? '#e0554f' : 'var(--or)'}">${c.valeur}</div>
