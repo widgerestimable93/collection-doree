@@ -796,6 +796,7 @@ Router.add('/admin', { title: '/admin', render: () => {
           <button class="active" data-tab="dashboard">Dashboard</button>
           <button data-tab="produits">Produits</button>
           <button data-tab="ajouter">Ajouter un produit</button>
+          <button data-tab="vendeurs">Vendeurs</button>
         </div>
         <div class="tab-panel active" id="tab-dashboard">
           <div id="dashboard-loading" style="color:var(--gris-texte);padding:20px 0">Chargement des statistiques...</div>
@@ -913,6 +914,57 @@ Router.add('/admin', { title: '/admin', render: () => {
             <p id="form-feedback" class="full-row" style="color:var(--or-clair)"></p>
           </form>
         </div>
+
+        <div class="tab-panel" id="tab-vendeurs">
+          <div id="vendeurs-kpi-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:20px 0"></div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;margin:24px 0 14px">
+            <h3>Vendeurs</h3>
+            <button class="btn btn-primary" id="btn-nouveau-vendeur">➕ Nouveau vendeur</button>
+          </div>
+          <table class="admin-table">
+            <thead><tr><th>Boutique</th><th>Contact</th><th>Email</th><th>Plan</th><th>Statut</th><th>Créé le</th><th>Actions</th></tr></thead>
+            <tbody id="vendeurs-tbody"></tbody>
+          </table>
+
+          <div id="vendeur-form-shell" style="display:none;margin-top:24px;border:1px solid rgba(212,175,55,0.2);border-radius:var(--radius);padding:20px">
+            <h4 id="vendeur-form-title" style="color:var(--or);margin-bottom:14px">Nouveau vendeur</h4>
+            <form id="vendeur-admin-form" class="form-grid">
+              <input type="hidden" name="id">
+              <div><label>Nom complet</label><input type="text" name="nom" class="field-input"></div>
+              <div><label>Nom de la boutique *</label><input type="text" name="boutique" required class="field-input"></div>
+              <div><label>Email *</label><input type="email" name="email" required class="field-input"></div>
+              <div id="vendeur-password-field"><label>Mot de passe temporaire *</label><input type="text" name="motDePasse" class="field-input" placeholder="Le vendeur pourra le changer plus tard"></div>
+              <div><label>Téléphone</label><input type="tel" name="telephone" class="field-input"></div>
+              <div><label>WhatsApp</label><input type="text" name="whatsapp" class="field-input"></div>
+              <div class="full-row"><label>Adresse</label><input type="text" name="adresse" class="field-input"></div>
+              <div><label>URL du logo</label><input type="url" name="logo" class="field-input"></div>
+              <div><label>URL de la bannière</label><input type="url" name="banniere" class="field-input"></div>
+              <div class="full-row"><label>Description</label><textarea name="description" rows="2" class="field-input"></textarea></div>
+              <div>
+                <label>Plan</label>
+                <select name="plan" class="field-input">
+                  <option value="gratuit">Gratuit</option>
+                  <option value="standard">Standard</option>
+                  <option value="premium">Premium</option>
+                  <option value="entreprise">Entreprise</option>
+                </select>
+              </div>
+              <div>
+                <label>Statut</label>
+                <select name="statut" class="field-input">
+                  <option value="actif">Actif</option>
+                  <option value="suspendu">Suspendu</option>
+                </select>
+              </div>
+              <div class="full-row">
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+                <button type="button" id="vendeur-form-annuler" class="btn btn-outline" style="margin-left:10px">Annuler</button>
+              </div>
+              <p id="vendeur-form-feedback" class="full-row" style="color:var(--or-clair)"></p>
+            </form>
+          </div>
+        </div>
       </div>
     </div>`;
 
@@ -924,6 +976,7 @@ Router.add('/admin', { title: '/admin', render: () => {
     document.getElementById('admin-shell').style.display = 'block';
     chargerProduitsAdmin();
     chargerDashboard();
+    chargerVendeurs();
   }
   if (adminToken) showAdmin();
 
@@ -949,6 +1002,107 @@ Router.add('/admin', { title: '/admin', render: () => {
       btn.classList.add('active');
       document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
     });
+  });
+
+  /* ---- Gestion des vendeurs (super-admin) ---- */
+  async function chargerVendeurs() {
+    const tbody = document.getElementById('vendeurs-tbody');
+    tbody.innerHTML = '<tr><td colspan="7">Chargement...</td></tr>';
+    const [{ vendeurs, error }, statsSA] = await Promise.all([
+      API.get({ action: 'vendeurs', token: adminToken }),
+      API.get({ action: 'statistiquesSuperAdmin', token: adminToken })
+    ]);
+    if (error) { tbody.innerHTML = `<tr><td colspan="7">${error}</td></tr>`; return; }
+
+    if (!statsSA.error) {
+      document.getElementById('vendeurs-kpi-grid').innerHTML = [
+        { label: 'Vendeurs (total)', valeur: statsSA.totalVendeurs },
+        { label: 'Actifs', valeur: statsSA.vendeursActifs },
+        { label: 'Suspendus', valeur: statsSA.vendeursSuspendus, alerte: statsSA.vendeursSuspendus > 0 }
+      ].map(k => `
+        <div class="glass" style="padding:18px;border-radius:var(--radius);text-align:center">
+          <div style="font-size:1.6rem;font-weight:500;color:${k.alerte?'#e0554f':'var(--or)'}">${k.valeur}</div>
+          <div style="font-size:0.75rem;color:var(--gris-texte);margin-top:4px;text-transform:uppercase">${k.label}</div>
+        </div>`).join('');
+    }
+
+    if (!vendeurs.length) { tbody.innerHTML = '<tr><td colspan="7">Aucun vendeur pour le moment.</td></tr>'; return; }
+    tbody.innerHTML = vendeurs.map(v => `
+      <tr>
+        <td>${escapeHtml(v.Boutique)}${v.Slug?` <a href="#/boutique?slug=${v.Slug}" target="_blank" style="color:var(--gris-texte);font-size:0.75rem">(voir)</a>`:''}</td>
+        <td>${escapeHtml(v.Nom||'')}</td>
+        <td>${escapeHtml(v.Email)}</td>
+        <td>${escapeHtml(v.Plan||'gratuit')}</td>
+        <td style="color:${v.Statut==='actif'?'var(--or-clair)':'#e0554f'}">${escapeHtml(v.Statut||'')}</td>
+        <td>${v.DateCreation?new Date(v.DateCreation).toLocaleDateString('fr-FR'):''}</td>
+        <td>
+          <span class="action-link" data-edit-vendeur="${v.ID}">Modifier</span>
+          <span class="action-link" data-toggle-statut="${v.ID}" data-statut-actuel="${v.Statut}">${v.Statut==='actif'?'Suspendre':'Réactiver'}</span>
+          <span class="action-link" data-delete-vendeur="${v.ID}" style="color:#e0554f">Supprimer</span>
+        </td>
+      </tr>`).join('');
+
+    tbody.querySelectorAll('[data-edit-vendeur]').forEach(el => el.addEventListener('click', () => {
+      ouvrirFormulaireVendeur(vendeurs.find(v => v.ID === el.dataset.editVendeur));
+    }));
+    tbody.querySelectorAll('[data-toggle-statut]').forEach(el => el.addEventListener('click', async () => {
+      const nouveauStatut = el.dataset.statutActuel === 'actif' ? 'suspendu' : 'actif';
+      const res = await API.post('vendeurModifier', { id: el.dataset.toggleStatut, statut: nouveauStatut }, adminToken);
+      if (res.success) chargerVendeurs(); else alert(res.error || 'Erreur.');
+    }));
+    tbody.querySelectorAll('[data-delete-vendeur]').forEach(el => el.addEventListener('click', async () => {
+      if (!confirm('Supprimer définitivement ce vendeur ? Ses commandes déjà enregistrées seront conservées, mais il perdra l\u2019accès à son tableau de bord.')) return;
+      const res = await API.post('vendeurSupprimer', { id: el.dataset.deleteVendeur }, adminToken);
+      if (res.success) chargerVendeurs(); else alert(res.error || 'Erreur.');
+    }));
+  }
+
+  function ouvrirFormulaireVendeur(vendeur) {
+    const shell = document.getElementById('vendeur-form-shell');
+    const form = document.getElementById('vendeur-admin-form');
+    const passwordField = document.getElementById('vendeur-password-field');
+    shell.style.display = 'block';
+    if (vendeur) {
+      document.getElementById('vendeur-form-title').textContent = 'Modifier — ' + vendeur.Boutique;
+      passwordField.style.display = 'none'; // le mot de passe ne se change pas ici (voir "mot de passe oublié" côté vendeur)
+      form.id.value = vendeur.ID; form.nom.value = vendeur.Nom || ''; form.boutique.value = vendeur.Boutique || '';
+      form.email.value = vendeur.Email || ''; form.telephone.value = vendeur.Telephone || ''; form.whatsapp.value = vendeur.Whatsapp || '';
+      form.adresse.value = vendeur.Adresse || ''; form.logo.value = vendeur.Logo || ''; form.banniere.value = vendeur.Banniere || '';
+      form.description.value = vendeur.Description || ''; form.plan.value = vendeur.Plan || 'gratuit'; form.statut.value = vendeur.Statut || 'actif';
+    } else {
+      document.getElementById('vendeur-form-title').textContent = 'Nouveau vendeur';
+      passwordField.style.display = 'block';
+      form.reset(); form.id.value = '';
+    }
+  }
+
+  document.getElementById('btn-nouveau-vendeur').addEventListener('click', () => ouvrirFormulaireVendeur(null));
+  document.getElementById('vendeur-form-annuler').addEventListener('click', () => {
+    document.getElementById('vendeur-form-shell').style.display = 'none';
+  });
+
+  document.getElementById('vendeur-admin-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const feedback = document.getElementById('vendeur-form-feedback');
+    const estModification = !!form.id.value;
+    const data = {
+      id: form.id.value || undefined, nom: form.nom.value, boutique: form.boutique.value, email: form.email.value,
+      telephone: form.telephone.value, whatsapp: form.whatsapp.value, adresse: form.adresse.value,
+      logo: form.logo.value, banniere: form.banniere.value, description: form.description.value,
+      plan: form.plan.value, statut: form.statut.value
+    };
+    if (!estModification) data.motDePasse = form.motDePasse.value;
+    const res = await API.post(estModification ? 'vendeurModifier' : 'vendeurCreer', data, adminToken);
+    if (res.success) {
+      feedback.style.color = 'var(--or-clair)';
+      feedback.textContent = estModification ? 'Vendeur mis à jour.' : `Vendeur créé (identifiant boutique : ${res.slug || ''}).`;
+      chargerVendeurs();
+      setTimeout(() => { document.getElementById('vendeur-form-shell').style.display = 'none'; feedback.textContent = ''; }, 1800);
+    } else {
+      feedback.style.color = '#e0554f';
+      feedback.textContent = res.error || "Erreur lors de l'enregistrement.";
+    }
   });
 
   async function chargerProduitsAdmin() {
