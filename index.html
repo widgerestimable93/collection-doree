@@ -1904,11 +1904,42 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
     }
   });
 
+  /**
+   * Si une réponse API indique que la session vendeur n'est plus valide (compte
+   * suspendu, supprimé, ou token expiré), on arrête tout et on affiche un message
+   * clair à la place du tableau de bord — plutôt qu'une simple ligne d'erreur
+   * perdue dans un panneau. Retourne true si c'était bien ce cas (pour que
+   * l'appelant arrête son propre rendu).
+   */
+  let compteBloqueAffiche = false;
+  function gererSessionInvalide(erreur) {
+    if (!erreur) return false;
+    const estProblemeSession = /suspendu|n'existe plus|session invalide/i.test(erreur);
+    if (!estProblemeSession) return false;
+
+    if (!compteBloqueAffiche) {
+      compteBloqueAffiche = true;
+      localStorage.removeItem('lcd_vendeur_token');
+      localStorage.removeItem('lcd_vendeur_info');
+      document.getElementById('vendeur-shell').innerHTML = `
+        <div class="glass" style="padding:40px;text-align:center;max-width:500px;margin:60px auto">
+          <h2 style="color:#e0554f;margin-bottom:14px">Accès suspendu</h2>
+          <p style="color:var(--gris-texte);margin-bottom:20px">${escapeHtml(erreur)}</p>
+          <p style="color:var(--gris-texte);font-size:0.85rem;margin-bottom:24px">
+            Si tu penses qu'il s'agit d'une erreur, contacte l'administrateur de la plateforme.
+          </p>
+          <button class="btn btn-primary" onclick="location.hash='#/vendeur'; location.reload()">Retour à la connexion</button>
+        </div>`;
+    }
+    return true;
+  }
+
   async function chargerApercuVendeur() {
     const { produits, error: errP } = await API.get({ action: 'produits', vendeurId: vendeurInfo.id });
     const { commandes, error: errC } = await API.get({ action: 'commandes', token: vendeurToken });
+    if (gererSessionInvalide(errP) || gererSessionInvalide(errC)) return;
     const grid = document.getElementById('v-kpi-grid');
-    if (errP || errC) { grid.innerHTML = `<p style="color:#e0554f">Erreur de chargement.</p>`; return; }
+    if (errP || errC) { grid.innerHTML = `<p style="color:#e0554f">${escapeHtml(errP || errC)}</p>`; return; }
     const ruptures = produits.filter(p => Number(p.Stock) <= 0);
     const aujourdHui = new Date().toDateString();
     const commandesJour = commandes.filter(c => new Date(c.Date).toDateString() === aujourdHui);
@@ -1933,9 +1964,11 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
 
   async function chargerProduitsVendeur() {
     const tbody = document.getElementById('v-produits-tbody');
+    if (!tbody) return; // le panneau a pu être remplacé par le message "Accès suspendu"
     tbody.innerHTML = '<tr><td colspan="7">Chargement...</td></tr>';
     const { produits, error } = await API.get({ action: 'produits', vendeurId: vendeurInfo.id });
-    if (error) { tbody.innerHTML = `<tr><td colspan="7">${error}</td></tr>`; return; }
+    if (gererSessionInvalide(error)) return;
+    if (error) { tbody.innerHTML = `<tr><td colspan="7">${escapeHtml(error)}</td></tr>`; return; }
     if (!produits.length) { tbody.innerHTML = '<tr><td colspan="7">Aucun produit. Ajoutez-en un dans l\u2019onglet "Ajouter un produit".</td></tr>'; return; }
     tbody.innerHTML = produits.map(p => `
       <tr>
@@ -1949,9 +1982,11 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
 
   async function chargerCommandesVendeur() {
     const tbody = document.getElementById('v-commandes-tbody');
+    if (!tbody) return;
     tbody.innerHTML = '<tr><td colspan="7">Chargement...</td></tr>';
     const { commandes, error } = await API.get({ action: 'commandes', token: vendeurToken });
-    if (error) { tbody.innerHTML = `<tr><td colspan="7">${error}</td></tr>`; return; }
+    if (gererSessionInvalide(error)) return;
+    if (error) { tbody.innerHTML = `<tr><td colspan="7">${escapeHtml(error)}</td></tr>`; return; }
     if (!commandes.length) { tbody.innerHTML = '<tr><td colspan="7">Aucune commande pour le moment.</td></tr>'; return; }
     tbody.innerHTML = commandes.map(c => `
       <tr>
@@ -1962,9 +1997,11 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
 
   async function chargerMessagesVendeur() {
     const tbody = document.getElementById('v-messages-tbody');
+    if (!tbody) return;
     tbody.innerHTML = '<tr><td colspan="4">Chargement...</td></tr>';
     const { messages, error } = await API.get({ action: 'messages', token: vendeurToken });
-    if (error) { tbody.innerHTML = `<tr><td colspan="4">${error}</td></tr>`; return; }
+    if (gererSessionInvalide(error)) return;
+    if (error) { tbody.innerHTML = `<tr><td colspan="4">${escapeHtml(error)}</td></tr>`; return; }
     if (!messages.length) { tbody.innerHTML = '<tr><td colspan="4">Aucun message pour le moment.</td></tr>'; return; }
     tbody.innerHTML = messages.map(m => `
       <tr>
