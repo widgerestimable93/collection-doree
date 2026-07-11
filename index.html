@@ -408,7 +408,7 @@ function Layout(activePath) {
         <div><h4>Collection D'Or</h4><p>L'élégance à chaque pas. Créations artisanales faites main en Haïti.</p></div>
         <div><h4>Navigation</h4><ul><li><a href="#/collection">Collection</a></li><li><a href="#/a-propos">À propos</a></li><li><a href="#/contact">Contact</a></li></ul></div>
         <div><h4>Informations</h4><ul><li><a href="#/faq">FAQ</a></li></ul></div>
-        <div><h4>Contact</h4><ul><li><a href="https://wa.me/${CONFIG.WHATSAPP_NUMBER}" target="_blank">WhatsApp</a></li><li><a href="mailto:${CONFIG.CONTACT_EMAIL}">Email</a></li><li><a href="#/vendeur">Espace vendeur</a></li></ul></div>
+        <div><h4>Contact</h4><ul><li><a href="https://wa.me/${CONFIG.WHATSAPP_NUMBER}" target="_blank">WhatsApp</a></li><li><a href="mailto:${CONFIG.CONTACT_EMAIL}">Email</a></li><li><a href="#/vendeur">Espace vendeur</a></li><li><a href="#/devenir-vendeur">Devenir vendeur</a></li></ul></div>
       </div>
       <div class="footer-bottom">© ${new Date().getFullYear()} La Collection Dorée — Tous droits réservés.</div>
     </div>
@@ -807,6 +807,8 @@ Router.add('/admin', { title: '/admin', render: () => {
           <button data-tab="produits">Produits</button>
           <button data-tab="ajouter">Ajouter un produit</button>
           <button data-tab="vendeurs">Vendeurs</button>
+          <button data-tab="demandes">Demandes</button>
+          <button data-tab="annonces">Annonces</button>
         </div>
         <div class="tab-panel active" id="tab-dashboard">
           <div id="dashboard-loading" style="color:var(--gris-texte);padding:20px 0">Chargement des statistiques...</div>
@@ -991,6 +993,28 @@ Router.add('/admin', { title: '/admin', render: () => {
             </form>
           </div>
         </div>
+
+        <div class="tab-panel" id="tab-demandes">
+          <h3 style="margin-bottom:16px">Demandes "Devenir vendeur"</h3>
+          <table class="admin-table">
+            <thead><tr><th>Date</th><th>Boutique</th><th>Contact</th><th>Message</th><th>Statut</th><th>Actions</th></tr></thead>
+            <tbody id="demandes-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="tab-panel" id="tab-annonces">
+          <h3 style="margin-bottom:8px">Envoyer une annonce aux vendeurs</h3>
+          <p style="color:var(--gris-texte);font-size:0.82rem;margin-bottom:16px">
+            Envoyée par e-mail à tous les vendeurs actifs. Pas encore de notification in-app —
+            l'e-mail est le canal fiable déjà en place sur la plateforme.
+          </p>
+          <form id="annonce-form" class="form-grid" style="max-width:600px">
+            <div class="full-row"><label>Sujet *</label><input type="text" name="sujet" required class="field-input"></div>
+            <div class="full-row"><label>Message *</label><textarea name="message" rows="6" required class="field-input"></textarea></div>
+            <div class="full-row"><button type="submit" class="btn btn-primary">Envoyer à tous les vendeurs actifs</button></div>
+            <p id="annonce-feedback" class="full-row" style="color:var(--or-clair)"></p>
+          </form>
+        </div>
       </div>
     </div>`;
 
@@ -1003,6 +1027,7 @@ Router.add('/admin', { title: '/admin', render: () => {
     chargerProduitsAdmin();
     chargerDashboard();
     chargerVendeurs();
+    chargerDemandes();
   }
   if (adminToken) showAdmin();
 
@@ -1151,6 +1176,61 @@ Router.add('/admin', { title: '/admin', render: () => {
       feedback.style.color = '#e0554f';
       feedback.textContent = res.error || "Erreur lors de l'enregistrement.";
     }
+  });
+
+  /* ---- Demandes "Devenir vendeur" ---- */
+  async function chargerDemandes() {
+    const tbody = document.getElementById('demandes-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="6">Chargement...</td></tr>';
+    const { demandes, error } = await API.get({ action: 'demandesVendeur', token: adminToken });
+    if (error) { tbody.innerHTML = `<tr><td colspan="6">${escapeHtml(error)}</td></tr>`; return; }
+    if (!demandes.length) { tbody.innerHTML = '<tr><td colspan="6">Aucune demande pour le moment.</td></tr>'; return; }
+
+    const couleurStatut = { en_attente: 'var(--or-clair)', acceptee: '#3fae5a', refusee: '#e0554f' };
+    tbody.innerHTML = demandes.map(d => `
+      <tr>
+        <td>${d.Date?new Date(d.Date).toLocaleDateString('fr-FR'):''}</td>
+        <td>${escapeHtml(d.Boutique)}</td>
+        <td>${escapeHtml(d.Nom||'')}<br><span style="color:var(--gris-texte);font-size:0.8rem">${escapeHtml(d.Email)}${d.Telephone?' · '+escapeHtml(d.Telephone):''}</span></td>
+        <td style="max-width:260px">${escapeHtml(d.Message||'')}</td>
+        <td style="color:${couleurStatut[d.Statut]||'var(--gris-texte)'}">${escapeHtml(d.Statut||'')}</td>
+        <td>${d.Statut === 'en_attente'
+          ? `<span class="action-link" data-accepter="${d.ID}">Accepter</span><span class="action-link" data-refuser="${d.ID}" style="color:#e0554f">Refuser</span>`
+          : '—'}</td>
+      </tr>`).join('');
+
+    tbody.querySelectorAll('[data-accepter]').forEach(el => el.addEventListener('click', async () => {
+      if (!confirm('Accepter cette demande ? Un compte vendeur sera créé et les identifiants envoyés par e-mail automatiquement.')) return;
+      const res = await API.post('demandeVendeurTraiter', { id: el.dataset.accepter, action: 'accepter' }, adminToken);
+      if (res.success) { chargerDemandes(); chargerVendeurs(); } else alert(res.error || 'Erreur.');
+    }));
+    tbody.querySelectorAll('[data-refuser]').forEach(el => el.addEventListener('click', async () => {
+      if (!confirm('Refuser cette demande ?')) return;
+      const res = await API.post('demandeVendeurTraiter', { id: el.dataset.refuser, action: 'refuser' }, adminToken);
+      if (res.success) chargerDemandes(); else alert(res.error || 'Erreur.');
+    }));
+  }
+
+  /* ---- Annonces vers les vendeurs ---- */
+  document.getElementById('annonce-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const feedback = document.getElementById('annonce-feedback');
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    feedback.style.color = 'var(--gris-texte)';
+    feedback.textContent = 'Envoi en cours...';
+    const res = await API.post('annonceEnvoyer', { sujet: form.sujet.value, message: form.message.value }, adminToken);
+    if (res.success) {
+      feedback.style.color = 'var(--or-clair)';
+      feedback.textContent = `Annonce envoyée à ${res.envoyes} vendeur(s)${res.echoues ? `, ${res.echoues} échec(s)` : ''}.`;
+      form.reset();
+    } else {
+      feedback.style.color = '#e0554f';
+      feedback.textContent = res.error || "Erreur lors de l'envoi.";
+    }
+    btn.disabled = false;
   });
 
   async function chargerProduitsAdmin() {
@@ -1654,7 +1734,24 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
           <input type="password" id="vendeur-login-password" placeholder="Mot de passe" required class="field-input">
           <button type="submit" class="btn btn-primary">Se connecter</button>
           <p id="vendeur-login-error" style="color:#e0554f;font-size:0.85rem"></p>
+          <button type="button" id="lien-mot-de-passe-oublie" style="background:none;border:none;color:var(--gris-texte);font-size:0.82rem;text-decoration:underline;cursor:pointer;padding:0">Mot de passe oublié ?</button>
         </form>
+
+        <div id="reset-panel" style="display:none;margin-top:20px;border-top:1px solid rgba(212,175,55,0.15);padding-top:20px">
+          <div id="reset-etape-1">
+            <p style="color:var(--gris-texte);font-size:0.85rem;margin-bottom:12px">Entre l'email de ta boutique, un code de réinitialisation valable 30 minutes te sera envoyé.</p>
+            <input type="email" id="reset-email" placeholder="Email de la boutique" required class="field-input" style="margin-bottom:10px">
+            <button type="button" id="btn-demander-code" class="btn btn-outline" style="width:100%">Recevoir le code</button>
+            <p id="reset-etape-1-feedback" style="font-size:0.82rem;margin-top:10px"></p>
+          </div>
+          <div id="reset-etape-2" style="display:none">
+            <p style="color:var(--gris-texte);font-size:0.85rem;margin-bottom:12px">Entre le code reçu par e-mail et ton nouveau mot de passe.</p>
+            <input type="text" id="reset-code" placeholder="Code à 6 chiffres" required class="field-input" style="margin-bottom:10px">
+            <input type="password" id="reset-nouveau-mdp" placeholder="Nouveau mot de passe (6+ caractères)" required class="field-input" style="margin-bottom:10px">
+            <button type="button" id="btn-confirmer-reset" class="btn btn-primary" style="width:100%">Réinitialiser le mot de passe</button>
+            <p id="reset-etape-2-feedback" style="font-size:0.82rem;margin-top:10px"></p>
+          </div>
+        </div>
       </div>
 
       <div id="vendeur-shell" style="display:none">
@@ -1836,6 +1933,48 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
       showVendeurDashboard();
     } else {
       document.getElementById('vendeur-login-error').textContent = res.error || 'Erreur de connexion.';
+    }
+  });
+
+  /* ---- Mot de passe oublié ---- */
+  document.getElementById('lien-mot-de-passe-oublie').addEventListener('click', () => {
+    const panel = document.getElementById('reset-panel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  });
+
+  document.getElementById('btn-demander-code').addEventListener('click', async () => {
+    const email = document.getElementById('reset-email').value;
+    const feedback = document.getElementById('reset-etape-1-feedback');
+    if (!email) { feedback.style.color = '#e0554f'; feedback.textContent = 'Entre ton email.'; return; }
+    feedback.style.color = 'var(--gris-texte)'; feedback.textContent = 'Envoi en cours...';
+    const res = await API.post('vendeurDemanderReset', { email });
+    if (res.success) {
+      feedback.style.color = 'var(--or-clair)';
+      feedback.textContent = 'Code envoyé — vérifie ta boîte mail.';
+      document.getElementById('reset-etape-2').style.display = 'block';
+    } else {
+      feedback.style.color = '#e0554f';
+      feedback.textContent = res.error || "Erreur lors de l'envoi.";
+    }
+  });
+
+  document.getElementById('btn-confirmer-reset').addEventListener('click', async () => {
+    const email = document.getElementById('reset-email').value;
+    const code = document.getElementById('reset-code').value;
+    const nouveauMotDePasse = document.getElementById('reset-nouveau-mdp').value;
+    const feedback = document.getElementById('reset-etape-2-feedback');
+    feedback.style.color = 'var(--gris-texte)'; feedback.textContent = 'Vérification...';
+    const res = await API.post('vendeurReinitialiserMotDePasse', { email, code, nouveauMotDePasse });
+    if (res.success) {
+      feedback.style.color = 'var(--or-clair)';
+      feedback.textContent = 'Mot de passe changé — tu peux te reconnecter.';
+      setTimeout(() => {
+        document.getElementById('reset-panel').style.display = 'none';
+        document.getElementById('vendeur-login-email').value = email;
+      }, 1500);
+    } else {
+      feedback.style.color = '#e0554f';
+      feedback.textContent = res.error || 'Erreur.';
     }
   });
 
@@ -2223,6 +2362,48 @@ Router.add('/boutique', { title: '/boutique', render: async (params) => {
   } catch (e) {
     view.innerHTML = '<div class="container"><p class="empty-state">Boutique introuvable ou indisponible.</p></div>';
   }
+}});
+
+/* ----- Devenir vendeur (page publique) ----- */
+Router.add('/devenir-vendeur', { title: '/devenir-vendeur', render: () => {
+  document.getElementById('view').innerHTML = `
+    <div class="container" style="padding:50px 0;max-width:640px">
+      <h1 style="margin-bottom:10px">Devenir vendeur sur La Collection Dorée</h1>
+      <p style="color:var(--gris-texte);margin-bottom:30px">
+        Remplis ce formulaire pour demander l'ouverture de ta propre boutique sur la plateforme.
+        Un membre de l'équipe examine chaque demande avant de créer ton accès.
+      </p>
+      <form id="devenir-vendeur-form" class="form-grid glass" style="padding:24px">
+        <div><label>Ton nom complet *</label><input type="text" name="nom" required class="field-input"></div>
+        <div><label>Nom de ta boutique *</label><input type="text" name="boutique" required class="field-input"></div>
+        <div><label>Email *</label><input type="email" name="email" required class="field-input"></div>
+        <div><label>Téléphone</label><input type="tel" name="telephone" class="field-input"></div>
+        <div class="full-row"><label>Parle-nous de ta boutique (produits, expérience...)</label><textarea name="message" rows="4" class="field-input"></textarea></div>
+        <div class="full-row"><button type="submit" class="btn btn-primary">Envoyer ma demande</button></div>
+        <p id="devenir-vendeur-feedback" class="full-row" style="color:var(--or-clair)"></p>
+      </form>
+    </div>`;
+
+  document.getElementById('devenir-vendeur-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const feedback = document.getElementById('devenir-vendeur-feedback');
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    const res = await API.post('demandeVendeurCreer', {
+      nom: form.nom.value, boutique: form.boutique.value, email: form.email.value,
+      telephone: form.telephone.value, message: form.message.value
+    });
+    if (res.success) {
+      form.innerHTML = `<p class="full-row" style="color:var(--or-clair)">
+        Merci ! Ta demande a été envoyée. Tu recevras un e-mail avec tes identifiants
+        si elle est acceptée.</p>`;
+    } else {
+      feedback.style.color = '#e0554f';
+      feedback.textContent = res.error || "Erreur lors de l'envoi.";
+      btn.disabled = false;
+    }
+  });
 }});
 </script>
 </body>
