@@ -60,8 +60,8 @@
 }
 
 * { margin:0; padding:0; box-sizing:border-box; }
-html { scroll-behavior: smooth; }
-body { background: var(--noir); color: var(--blanc-casse); font-family: var(--font-body); font-weight:300; line-height:1.6; -webkit-font-smoothing:antialiased; transition: background-color var(--transition), color var(--transition); }
+html { scroll-behavior: smooth; overflow-x: hidden; }
+body { background: var(--noir); color: var(--blanc-casse); font-family: var(--font-body); font-weight:300; line-height:1.6; -webkit-font-smoothing:antialiased; transition: background-color var(--transition), color var(--transition); overflow-x: hidden; max-width: 100vw; }
 a { color: inherit; text-decoration: none; }
 img { max-width:100%; display:block; }
 button { font-family: inherit; cursor:pointer; border:none; background:none; }
@@ -177,6 +177,10 @@ h1,h2,h3,h4 { font-family: var(--font-display); font-weight:500; letter-spacing:
 
 /* Admin */
 .login-shell { max-width:400px; margin:120px auto; }
+@media (max-width:480px) {
+  .login-shell, #vendeur-login-shell { padding:24px 18px !important; margin:60px auto !important; }
+  .container { padding:0 16px; }
+}
 .admin-table { width:100%; border-collapse:collapse; margin-top:24px; }
 .admin-table th, .admin-table td { padding:12px 14px; border-bottom:1px solid rgba(212,175,55,0.12); text-align:left; font-size:0.88rem; }
 .admin-table th { color:var(--or); font-weight:500; text-transform:uppercase; font-size:0.72rem; letter-spacing:0.05em; }
@@ -184,9 +188,20 @@ h1,h2,h3,h4 { font-family: var(--font-display); font-weight:500; letter-spacing:
 @media (max-width:700px) { .form-grid { grid-template-columns:1fr; } }
 .form-grid label { font-size:0.78rem; color:var(--gris-texte); margin-bottom:6px; display:block; }
 .full-row { grid-column:1/-1; }
-.tab-buttons { display:flex; gap:10px; margin:30px 0 10px; }
-.tab-buttons button { padding:10px 20px; border:1px solid rgba(212,175,55,0.3); border-radius:var(--radius); color:var(--gris-texte); }
+.tab-buttons { display:flex; gap:10px; margin:30px 0 10px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; padding-bottom:4px; }
+.tab-buttons::-webkit-scrollbar { display:none; }
+.tab-buttons button { padding:10px 20px; border:1px solid rgba(212,175,55,0.3); border-radius:var(--radius); color:var(--gris-texte); flex-shrink:0; white-space:nowrap; }
 .tab-buttons button.active { background:var(--gradient-or); color:var(--noir); }
+
+/* Tableaux admin/vendeur : le tableau défile horizontalement DANS son propre
+   conteneur sur petit écran, au lieu de forcer toute la page à s'étirer. */
+.table-scroll { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; margin-top:24px; }
+.table-scroll .admin-table { margin-top:0; min-width:640px; }
+
+/* Grilles à 2-3 colonnes (dashboard, aperçu) : repli automatique en 1 colonne sur mobile. */
+.grid-responsive-2 { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.grid-responsive-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:20px; }
+@media (max-width:760px) { .grid-responsive-2, .grid-responsive-3 { grid-template-columns:1fr; } }
 .tab-panel { display:none; }
 .tab-panel.active { display:block; }
 .action-link { color:var(--or); cursor:pointer; margin-right:12px; font-size:0.82rem; }
@@ -261,6 +276,19 @@ function afficherApercuImage(prefixe, url) {
   if (url) { img.src = url; img.style.display = 'block'; label.textContent = 'Changer l\u2019image'; }
   else { img.style.display = 'none'; label.textContent = 'Clique pour choisir une image'; }
 }
+
+/** Bouton 👁 afficher/masquer un mot de passe — délégué sur tout le document
+ *  pour fonctionner même sur les champs générés après un changement de route. */
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-toggle-password]');
+  if (!btn) return;
+  const input = document.getElementById(btn.dataset.togglePassword);
+  if (!input) return;
+  const masque = input.type === 'password';
+  input.type = masque ? 'text' : 'password';
+  btn.textContent = masque ? '🙈' : '👁';
+  btn.setAttribute('aria-label', masque ? 'Masquer le mot de passe' : 'Afficher le mot de passe');
+});
 
 function escapeHtml(str) {
   const div = document.createElement('div');
@@ -794,7 +822,10 @@ Router.add('/admin', { title: '/admin', render: () => {
       <div class="login-shell glass" id="login-shell" style="padding:40px">
         <h2 style="text-align:center;margin-bottom:24px">Administration</h2>
         <form id="login-form" style="display:grid;gap:14px">
-          <input type="password" id="login-password" placeholder="Mot de passe administrateur" required class="field-input">
+          <div style="position:relative">
+            <input type="password" id="login-password" placeholder="Mot de passe administrateur" required class="field-input" autocomplete="current-password" style="padding-right:44px">
+            <button type="button" data-toggle-password="login-password" aria-label="Afficher le mot de passe" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--gris-texte);cursor:pointer;font-size:1.1rem;padding:4px">👁</button>
+          </div>
           <button type="submit" class="btn btn-primary">Se connecter</button>
           <p id="login-error" style="color:#e0554f;font-size:0.85rem"></p>
         </form>
@@ -824,7 +855,7 @@ Router.add('/admin', { title: '/admin', render: () => {
                 <canvas id="chart-categories" height="90"></canvas>
               </div>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:32px" id="charts-row-2">
+            <div class="grid-responsive-2" style="margin-bottom:32px" id="charts-row-2">
               <div class="glass" style="padding:20px;border-radius:var(--radius)">
                 <h4 style="color:var(--or);font-weight:500;margin-bottom:14px;font-size:0.9rem">Produits les plus vus</h4>
                 <canvas id="chart-vues" height="110"></canvas>
@@ -834,7 +865,7 @@ Router.add('/admin', { title: '/admin', render: () => {
                 <canvas id="chart-commandes-produits" height="110"></canvas>
               </div>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px" id="dashboard-tables">
+            <div class="grid-responsive-3" id="dashboard-tables">
               <div class="glass" style="padding:18px;border-radius:var(--radius)">
                 <h4 style="color:#e0554f;font-weight:500;margin-bottom:10px;font-size:0.85rem">⚠ Rupture de stock</h4>
                 <div id="liste-rupture" style="font-size:0.82rem;color:var(--gris-texte)"></div>
@@ -851,10 +882,10 @@ Router.add('/admin', { title: '/admin', render: () => {
           </div>
         </div>
         <div class="tab-panel" id="tab-produits">
-          <table class="admin-table">
+          <div class="table-scroll"><table class="admin-table">
             <thead><tr><th>Photo</th><th>Nom</th><th>Catégorie</th><th>Prix</th><th>Stock</th><th>Statut</th><th>Actions</th></tr></thead>
             <tbody id="produits-tbody"></tbody>
-          </table>
+          </table></div>
         </div>
         <div class="tab-panel" id="tab-ajouter">
           <h3 id="form-title">Nouveau produit</h3>
@@ -934,10 +965,10 @@ Router.add('/admin', { title: '/admin', render: () => {
             <h3>Vendeurs</h3>
             <button class="btn btn-primary" id="btn-nouveau-vendeur">➕ Nouveau vendeur</button>
           </div>
-          <table class="admin-table">
+          <div class="table-scroll"><table class="admin-table">
             <thead><tr><th>Boutique</th><th>Contact</th><th>Email</th><th>Plan</th><th>Statut</th><th>Créé le</th><th>Actions</th></tr></thead>
             <tbody id="vendeurs-tbody"></tbody>
-          </table>
+          </table></div>
 
           <div id="vendeur-form-shell" style="display:none;margin-top:24px;border:1px solid rgba(212,175,55,0.2);border-radius:var(--radius);padding:20px">
             <h4 id="vendeur-form-title" style="color:var(--or);margin-bottom:14px">Nouveau vendeur</h4>
@@ -996,10 +1027,10 @@ Router.add('/admin', { title: '/admin', render: () => {
 
         <div class="tab-panel" id="tab-demandes">
           <h3 style="margin-bottom:16px">Demandes "Devenir vendeur"</h3>
-          <table class="admin-table">
+          <div class="table-scroll"><table class="admin-table">
             <thead><tr><th>Date</th><th>Boutique</th><th>Contact</th><th>Message</th><th>Statut</th><th>Actions</th></tr></thead>
             <tbody id="demandes-tbody"></tbody>
-          </table>
+          </table></div>
         </div>
 
         <div class="tab-panel" id="tab-annonces">
@@ -1731,7 +1762,10 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
         <h2 style="text-align:center;margin-bottom:24px">Espace vendeur</h2>
         <form id="vendeur-login-form" style="display:grid;gap:14px">
           <input type="email" id="vendeur-login-email" placeholder="Email de la boutique" required class="field-input">
-          <input type="password" id="vendeur-login-password" placeholder="Mot de passe" required class="field-input">
+          <div style="position:relative">
+            <input type="password" id="vendeur-login-password" placeholder="Mot de passe" required class="field-input" autocomplete="current-password" style="padding-right:44px">
+            <button type="button" data-toggle-password="vendeur-login-password" aria-label="Afficher le mot de passe" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--gris-texte);cursor:pointer;font-size:1.1rem;padding:4px">👁</button>
+          </div>
           <button type="submit" class="btn btn-primary">Se connecter</button>
           <p id="vendeur-login-error" style="color:#e0554f;font-size:0.85rem"></p>
           <button type="button" id="lien-mot-de-passe-oublie" style="background:none;border:none;color:var(--gris-texte);font-size:0.82rem;text-decoration:underline;cursor:pointer;padding:0">Mot de passe oublié ?</button>
@@ -1747,7 +1781,10 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
           <div id="reset-etape-2" style="display:none">
             <p style="color:var(--gris-texte);font-size:0.85rem;margin-bottom:12px">Entre le code reçu par e-mail et ton nouveau mot de passe.</p>
             <input type="text" id="reset-code" placeholder="Code à 6 chiffres" required class="field-input" style="margin-bottom:10px">
-            <input type="password" id="reset-nouveau-mdp" placeholder="Nouveau mot de passe (6+ caractères)" required class="field-input" style="margin-bottom:10px">
+            <div style="position:relative;margin-bottom:10px">
+              <input type="password" id="reset-nouveau-mdp" placeholder="Nouveau mot de passe (6+ caractères)" required class="field-input" autocomplete="new-password" style="padding-right:44px">
+              <button type="button" data-toggle-password="reset-nouveau-mdp" aria-label="Afficher le mot de passe" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--gris-texte);cursor:pointer;font-size:1.1rem;padding:4px">👁</button>
+            </div>
             <button type="button" id="btn-confirmer-reset" class="btn btn-primary" style="width:100%">Réinitialiser le mot de passe</button>
             <p id="reset-etape-2-feedback" style="font-size:0.82rem;margin-top:10px"></p>
           </div>
@@ -1755,7 +1792,7 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
       </div>
 
       <div id="vendeur-shell" style="display:none">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0;flex-wrap:wrap;gap:12px">
           <h2 id="vendeur-boutique-nom" style="font-size:1.4rem"></h2>
           <button class="btn btn-outline" id="vendeur-logout-btn">Déconnexion</button>
         </div>
@@ -1770,7 +1807,7 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
 
         <div class="tab-panel active" id="tab-v-apercu">
           <div id="v-kpi-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:20px 0"></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px" id="v-dashboard-tables">
+          <div class="grid-responsive-2" id="v-dashboard-tables">
             <div class="glass" style="padding:18px;border-radius:var(--radius)">
               <h4 style="color:#e0554f;font-weight:500;margin-bottom:10px;font-size:0.85rem">⚠ Rupture de stock</h4>
               <div id="v-liste-rupture" style="font-size:0.82rem;color:var(--gris-texte)"></div>
@@ -1783,10 +1820,10 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
         </div>
 
         <div class="tab-panel" id="tab-v-produits">
-          <table class="admin-table">
+          <div class="table-scroll"><table class="admin-table">
             <thead><tr><th>Photo</th><th>Nom</th><th>Catégorie</th><th>Prix</th><th>Stock</th><th>Statut</th><th>Actions</th></tr></thead>
             <tbody id="v-produits-tbody"></tbody>
-          </table>
+          </table></div>
         </div>
 
         <div class="tab-panel" id="tab-v-ajouter">
@@ -1856,17 +1893,17 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
         </div>
 
         <div class="tab-panel" id="tab-v-commandes">
-          <table class="admin-table">
+          <div class="table-scroll"><table class="admin-table">
             <thead><tr><th>Date</th><th>Client</th><th>Téléphone</th><th>Produit</th><th>Qté</th><th>Total</th><th>Statut</th></tr></thead>
             <tbody id="v-commandes-tbody"></tbody>
-          </table>
+          </table></div>
         </div>
 
         <div class="tab-panel" id="tab-v-messages">
-          <table class="admin-table">
+          <div class="table-scroll"><table class="admin-table">
             <thead><tr><th>Date</th><th>Nom</th><th>Contact</th><th>Message</th></tr></thead>
             <tbody id="v-messages-tbody"></tbody>
-          </table>
+          </table></div>
         </div>
 
         <div class="tab-panel" id="tab-v-profil">
@@ -2339,7 +2376,7 @@ Router.add('/boutique', { title: '/boutique', render: async (params) => {
 
     view.innerHTML = `
       <div style="background:${vendeur.Banniere?`url(${vendeur.Banniere}) center/cover`:'var(--noir-soft)'};height:220px;display:flex;align-items:flex-end">
-        <div class="container" style="display:flex;align-items:center;gap:16px;padding-bottom:20px">
+        <div class="container" style="display:flex;align-items:center;gap:16px;padding-bottom:20px;flex-wrap:wrap">
           ${vendeur.Logo?`<img src="${vendeur.Logo}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;border:2px solid var(--or)">`:''}
           <div>
             <h1 style="font-size:1.8rem">${escapeHtml(vendeur.Boutique)}</h1>
