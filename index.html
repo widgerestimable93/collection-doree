@@ -488,11 +488,63 @@ function bindProductGridEvents(container, produitsById) {
     const commander = e.target.closest('[data-commander]');
     if (commander) {
       const produit = produitsById[commander.dataset.commander];
-      if (produit) { API.post('clicWhatsapp', { id: produit.ID }).catch(()=>{}); window.open(buildWhatsappLink(produit), '_blank'); }
+      if (produit) ouvrirModalCommandeRapide(produit);
       return;
     }
     const goto = e.target.closest('[data-goto]');
     if (goto) navigate(`/produit?id=${goto.dataset.goto}`);
+  });
+}
+
+/**
+ * Petite fenêtre modale pour capter nom + téléphone avant d'ouvrir WhatsApp
+ * depuis une carte produit (grille collection, accueil, boutique publique) —
+ * pour que ces commandes "rapides" soient, elles aussi, réellement
+ * enregistrées et visibles dans l'onglet Commandes du vendeur.
+ */
+function ouvrirModalCommandeRapide(produit) {
+  let modal = document.getElementById('modal-commande-rapide');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modal-commande-rapide';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);padding:20px';
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div class="glass" style="max-width:400px;width:100%;padding:28px;position:relative">
+      <button type="button" id="modal-commande-fermer" aria-label="Fermer" style="position:absolute;top:14px;right:14px;background:none;border:none;color:var(--gris-texte);font-size:1.3rem;cursor:pointer">×</button>
+      <h3 style="margin-bottom:6px">${escapeHtml(produit.Nom)}</h3>
+      <p style="color:var(--gris-texte);font-size:0.85rem;margin-bottom:16px">Tes coordonnées avant d'ouvrir WhatsApp.</p>
+      <form id="modal-commande-form" style="display:grid;gap:12px">
+        <input type="text" name="nomClient" placeholder="Nom complet *" required class="field-input">
+        <input type="tel" name="telephone" placeholder="Téléphone *" required class="field-input">
+        <button type="submit" class="btn btn-whatsapp">Continuer sur WhatsApp</button>
+        <p id="modal-commande-feedback" style="color:#e0554f;font-size:0.82rem"></p>
+      </form>
+    </div>`;
+  modal.style.display = 'flex';
+
+  const fermer = () => { modal.style.display = 'none'; };
+  document.getElementById('modal-commande-fermer').addEventListener('click', fermer);
+  modal.addEventListener('click', (e) => { if (e.target === modal) fermer(); });
+
+  document.getElementById('modal-commande-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const nomClient = form.nomClient.value.trim();
+    const telephone = form.telephone.value.trim();
+    if (!nomClient || !telephone) { form.reportValidity(); return; }
+    const res = await API.post('commande', {
+      nomClient, telephone, produitId: produit.ID, produitNom: produit.Nom,
+      quantite: 1, prixUnitaire: produit.PrixPromo || produit.Prix, canal: 'WhatsApp-Rapide'
+    });
+    if (!res.success) {
+      document.getElementById('modal-commande-feedback').textContent = "Erreur d'enregistrement, réessaie.";
+      return;
+    }
+    API.post('clicWhatsapp', { id: produit.ID }).catch(() => {});
+    window.open(buildWhatsappLink(produit, { quantite: 1 }), '_blank');
+    fermer();
   });
 }
 
@@ -652,6 +704,22 @@ Router.add('/produit', { title: '/produit', render: async (params) => {
       </div>
     </section>
     <section class="section" style="padding-top:0">
+      <div class="container" style="max-width:760px">
+        <div class="section-heading" style="text-align:left"><div class="section-eyebrow">Avis clients</div><h2 id="avis-titre">Avis</h2></div>
+        <div id="avis-liste" style="margin-bottom:30px"></div>
+        <form id="avis-form" style="display:grid;gap:12px;max-width:500px">
+          <input type="text" name="nomClient" placeholder="Ton nom *" required class="field-input">
+          <div id="avis-etoiles" style="display:flex;gap:6px;font-size:1.6rem;cursor:pointer">
+            ${[1,2,3,4,5].map(n => `<span data-etoile="${n}" style="color:var(--gris-texte)">☆</span>`).join('')}
+          </div>
+          <input type="hidden" name="note" required>
+          <textarea name="commentaire" placeholder="Ton avis (optionnel)" rows="3" class="field-input"></textarea>
+          <button type="submit" class="btn btn-outline" style="justify-self:start">Laisser un avis</button>
+          <p id="avis-feedback" style="color:var(--or-clair);font-size:0.85rem"></p>
+        </form>
+      </div>
+    </section>
+    <section class="section" style="padding-top:0">
       <div class="container">
         <div class="section-heading"><div class="section-eyebrow">Vous aimerez aussi</div><h2>Produits similaires</h2></div>
         <div id="similaires-grid" class="products-grid"></div>
@@ -684,19 +752,22 @@ Router.add('/produit', { title: '/produit', render: async (params) => {
         ${produit.Caracteristiques?`<li><strong style="color:var(--blanc-casse)">Caractéristiques :</strong> ${escapeHtml(produit.Caracteristiques)}</li>`:''}
       </ul>
       <div class="qty-control"><button id="qty-minus">−</button><span id="qty-value">1</span><button id="qty-plus">+</button></div>
-      <div class="hero-actions">
-        <button id="btn-whatsapp" class="btn btn-whatsapp">Commander sur WhatsApp</button>
-        <button id="btn-email" class="btn btn-outline">Commander par email</button>
-        <button id="btn-partager" class="btn btn-outline">⤴ Partager</button>
-      </div>
       <form id="order-form" class="order-form">
-        <h3 style="font-size:1.1rem;margin-top:10px">Ou envoyez une demande directe</h3>
-        <input type="text" name="nomClient" placeholder="Nom complet" required>
-        <input type="tel" name="telephone" placeholder="Téléphone" required>
-        <input type="email" name="email" placeholder="Email (optionnel)">
+        <h3 style="font-size:1.1rem;margin-top:10px">Tes coordonnées</h3>
+        <p style="color:var(--gris-texte);font-size:0.82rem;margin-bottom:8px">
+          Remplis ces champs une fois — ils servent pour les 3 façons de commander ci-dessous.
+        </p>
+        <input type="text" name="nomClient" placeholder="Nom complet *" required>
+        <input type="tel" name="telephone" placeholder="Téléphone *" required>
+        <input type="email" name="email" placeholder="Email (optionnel, mais utile si tu choisis \"par email\")">
         <input type="text" name="adresse" placeholder="Adresse de livraison">
         <textarea name="commentaire" placeholder="Commentaire (optionnel)" rows="3"></textarea>
-        <button type="submit" class="btn btn-primary">Envoyer la demande</button>
+        <div class="hero-actions" style="margin-top:14px">
+          <button type="button" id="btn-whatsapp" class="btn btn-whatsapp">Commander sur WhatsApp</button>
+          <button type="button" id="btn-email" class="btn btn-outline">Commander par email</button>
+          <button type="button" id="btn-partager" class="btn btn-outline">⤴ Partager</button>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:14px">Envoyer la demande (sans WhatsApp ni email)</button>
         <p id="order-feedback" style="color:var(--or-clair);font-size:0.85rem"></p>
       </form>
     </div>`;
@@ -725,21 +796,57 @@ Router.add('/produit', { title: '/produit', render: async (params) => {
     document.getElementById('qty-plus').addEventListener('click', () => { quantite++; document.getElementById('qty-value').textContent = quantite; });
     document.getElementById('qty-minus').addEventListener('click', () => { if(quantite>1) quantite--; document.getElementById('qty-value').textContent = quantite; });
 
-    document.getElementById('btn-whatsapp').addEventListener('click', () => { API.post('clicWhatsapp',{id:produit.ID}).catch(()=>{}); window.open(buildWhatsappLink(produit,{quantite}), '_blank'); });
-    document.getElementById('btn-email').addEventListener('click', () => {
+    function donneesFormulaireCommande() {
+      const form = document.getElementById('order-form');
+      return {
+        form,
+        nomClient: form.nomClient.value.trim(),
+        telephone: form.telephone.value.trim(),
+        email: form.email.value.trim(),
+        adresse: form.adresse.value.trim(),
+        commentaire: form.commentaire.value.trim()
+      };
+    }
+
+    async function enregistrerCommande(canal) {
+      const { form, nomClient, telephone, email, adresse, commentaire } = donneesFormulaireCommande();
+      if (!nomClient || !telephone) {
+        form.reportValidity(); // affiche le message natif du navigateur sur le champ manquant
+        return null;
+      }
+      const data = { nomClient, telephone, email, adresse, commentaire,
+        produitId: produit.ID, produitNom: produit.Nom, quantite,
+        prixUnitaire: produit.PrixPromo || produit.Prix, canal };
+      const res = await API.post('commande', data);
+      return res;
+    }
+
+    document.getElementById('btn-whatsapp').addEventListener('click', async () => {
+      const res = await enregistrerCommande('WhatsApp');
+      if (!res) return; // validation échouée, message déjà affiché sur le formulaire
+      if (!res.success) { document.getElementById('order-feedback').textContent = "Erreur d'enregistrement, réessaie."; return; }
+      API.post('clicWhatsapp', { id: produit.ID }).catch(() => {});
+      const { nomClient, telephone } = donneesFormulaireCommande();
+      window.open(buildWhatsappLink(produit, { quantite, nomClient, telephone }), '_blank');
+    });
+
+    document.getElementById('btn-email').addEventListener('click', async () => {
+      const res = await enregistrerCommande('Email');
+      if (!res) return;
+      if (!res.success) { document.getElementById('order-feedback').textContent = "Erreur d'enregistrement, réessaie."; return; }
+      const { nomClient, telephone } = donneesFormulaireCommande();
       const sujet = encodeURIComponent(`Commande — ${produit.Nom}`);
-      const corps = encodeURIComponent(`Bonjour,\n\nJe souhaite commander :\nProduit : ${produit.Nom}\nRéférence : ${produit.Reference}\nQuantité : ${quantite}\nPrix : ${formatPrice(produit.Prix)}\n\nMerci.`);
+      const corps = encodeURIComponent(`Bonjour,\n\nJe souhaite commander :\nProduit : ${produit.Nom}\nRéférence : ${produit.Reference}\nQuantité : ${quantite}\nPrix : ${formatPrice(produit.Prix)}\n\nMes coordonnées :\nNom : ${nomClient}\nTéléphone : ${telephone}\n\nMerci.`);
       window.location.href = `mailto:${getProduitEmail(produit)}?subject=${sujet}&body=${corps}`;
     });
     document.getElementById('btn-partager').addEventListener('click', () => sharerProduit(produit, produit.ID));
 
     document.getElementById('order-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const form = e.target;
-      const data = { nomClient:form.nomClient.value, telephone:form.telephone.value, email:form.email.value, adresse:form.adresse.value, commentaire:form.commentaire.value, produitId:produit.ID, produitNom:produit.Nom, quantite, prixUnitaire: produit.PrixPromo||produit.Prix, canal:'Formulaire' };
-      const res = await API.post('commande', data);
+      const res = await enregistrerCommande('Formulaire');
+      if (!res) return; // validation échouée, message déjà affiché sur le formulaire
       document.getElementById('order-feedback').textContent = res.success ? 'Demande envoyée avec succès, nous vous contacterons rapidement.' : "Une erreur est survenue, réessayez ou contactez-nous via WhatsApp.";
-      if (res.success) form.reset();
+      if (res.success) e.target.reset();
     });
 
     const simGrid = document.getElementById('similaires-grid');
@@ -748,6 +855,62 @@ Router.add('/produit', { title: '/produit', render: async (params) => {
       simGrid.innerHTML = similaires.map(renderProductCard).join('');
       bindProductGridEvents(simGrid, byId);
     } else { simGrid.innerHTML = '<p class="empty-state">Aucun produit similaire pour le moment.</p>'; }
+
+    /* ---- Avis clients ---- */
+    async function chargerAvisProduit() {
+      const { avis, moyenne, total } = await API.get({ action: 'avisProduit', produitId: produit.ID });
+      document.getElementById('avis-titre').textContent = total
+        ? `Avis (${total}) — ${'★'.repeat(Math.round(moyenne))}${'☆'.repeat(5-Math.round(moyenne))} ${moyenne}/5`
+        : 'Avis';
+      const liste = document.getElementById('avis-liste');
+      liste.innerHTML = total
+        ? avis.map(a => `
+            <div style="border-bottom:1px solid rgba(212,175,55,0.1);padding:14px 0">
+              <div style="color:var(--or)">${'★'.repeat(Number(a.Note))}${'☆'.repeat(5-Number(a.Note))}</div>
+              <div style="font-weight:500;margin-top:4px">${escapeHtml(a.NomClient)}</div>
+              ${a.Commentaire?`<p style="color:var(--gris-texte);margin-top:4px">${escapeHtml(a.Commentaire)}</p>`:''}
+            </div>`).join('')
+        : '<p style="color:var(--gris-texte)">Aucun avis pour le moment — sois le premier à en laisser un.</p>';
+    }
+    chargerAvisProduit();
+
+    let noteChoisie = 0;
+    const etoileSpans = document.querySelectorAll('#avis-etoiles [data-etoile]');
+    function rafraichirEtoiles(survol) {
+      const seuil = survol || noteChoisie;
+      etoileSpans.forEach(s => {
+        const n = Number(s.dataset.etoile);
+        s.textContent = n <= seuil ? '★' : '☆';
+        s.style.color = n <= seuil ? 'var(--or)' : 'var(--gris-texte)';
+      });
+    }
+    etoileSpans.forEach(s => {
+      s.addEventListener('mouseenter', () => rafraichirEtoiles(Number(s.dataset.etoile)));
+      s.addEventListener('mouseleave', () => rafraichirEtoiles());
+      s.addEventListener('click', () => {
+        noteChoisie = Number(s.dataset.etoile);
+        document.getElementById('avis-form').note.value = noteChoisie;
+        rafraichirEtoiles();
+      });
+    });
+
+    document.getElementById('avis-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const feedback = document.getElementById('avis-feedback');
+      if (!noteChoisie) { feedback.style.color = '#e0554f'; feedback.textContent = 'Choisis une note (clique sur les étoiles).'; return; }
+      const res = await API.post('avis', {
+        produitId: produit.ID, nomClient: form.nomClient.value, note: noteChoisie, commentaire: form.commentaire.value
+      });
+      if (res.success) {
+        feedback.style.color = 'var(--or-clair)';
+        feedback.textContent = 'Merci ! Ton avis sera visible après validation par le vendeur.';
+        form.reset(); noteChoisie = 0; rafraichirEtoiles();
+      } else {
+        feedback.style.color = '#e0554f';
+        feedback.textContent = res.error || "Erreur lors de l'envoi.";
+      }
+    });
   } catch (e) { content.innerHTML = '<p class="empty-state">Produit introuvable.</p>'; }
 }});
 
@@ -1273,7 +1436,7 @@ Router.add('/admin', { title: '/admin', render: () => {
     tbody.innerHTML = produits.map(p => `
       <tr>
         <td>${(p.Photos&&p.Photos[0])?`<img src="${p.Photos[0]}" style="width:46px;height:46px;object-fit:cover;border-radius:4px">`:''}</td>
-        <td>${escapeHtml(p.Nom)}</td><td>${escapeHtml(p.Categorie||'')}</td><td>${formatPrice(p.Prix)}</td><td>${p.Stock}</td><td>${p.Disponible?'Disponible':'Masqué'}</td>
+        <td>${escapeHtml(p.Nom)}</td><td>${escapeHtml(p.Categorie||'')}</td><td>${formatPrice(p.Prix)}</td><td>${Number(p.Stock)||0}</td><td>${p.Disponible?'Disponible':'Masqué'}</td>
         <td><span class="action-link" data-edit="${p.ID}">Modifier</span><span class="action-link" data-delete="${p.ID}" style="color:#e0554f">Supprimer</span></td>
       </tr>`).join('');
     tbody.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => editerProduit(produits.find(p=>p.ID===el.dataset.edit))));
@@ -1801,7 +1964,7 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
           <button data-tab="v-produits">Produits</button>
           <button data-tab="v-ajouter">Ajouter un produit</button>
           <button data-tab="v-commandes">Commandes</button>
-          <button data-tab="v-messages">Messages</button>
+          <button data-tab="v-avis">Avis</button>
           <button data-tab="v-profil">Ma boutique</button>
         </div>
 
@@ -1899,10 +2062,10 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
           </table></div>
         </div>
 
-        <div class="tab-panel" id="tab-v-messages">
+        <div class="tab-panel" id="tab-v-avis">
           <div class="table-scroll"><table class="admin-table">
-            <thead><tr><th>Date</th><th>Nom</th><th>Contact</th><th>Message</th></tr></thead>
-            <tbody id="v-messages-tbody"></tbody>
+            <thead><tr><th>Date</th><th>Produit</th><th>Client</th><th>Note</th><th>Commentaire</th><th>Statut</th><th>Actions</th></tr></thead>
+            <tbody id="v-avis-tbody"></tbody>
           </table></div>
         </div>
 
@@ -1954,7 +2117,7 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
     chargerApercuVendeur();
     chargerProduitsVendeur();
     chargerCommandesVendeur();
-    chargerMessagesVendeur();
+    chargerAvisVendeur();
   }
   if (vendeurToken && vendeurInfo) showVendeurDashboard();
 
@@ -2134,7 +2297,7 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
       ? ruptures.map(p => `<div style="padding:6px 0;border-bottom:1px solid rgba(212,175,55,0.08)">${escapeHtml(p.Nom)}</div>`).join('')
       : 'Aucun produit en rupture.';
     document.getElementById('v-liste-commandes').innerHTML = commandes.slice(0,5).length
-      ? commandes.slice(0,5).map(c => `<div style="padding:6px 0;border-bottom:1px solid rgba(212,175,55,0.08)">${escapeHtml(c.NomClient)} — ${escapeHtml(c.ProduitNom)} ×${c.Quantite}</div>`).join('')
+      ? commandes.slice(0,5).map(c => `<div style="padding:6px 0;border-bottom:1px solid rgba(212,175,55,0.08)">${escapeHtml(c.NomClient)} — ${escapeHtml(c.ProduitNom)} ×${Number(c.Quantite)||0}</div>`).join('')
       : 'Aucune commande pour le moment.';
   }
 
@@ -2149,7 +2312,7 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
     tbody.innerHTML = produits.map(p => `
       <tr>
         <td>${(p.Photos&&p.Photos[0])?`<img src="${p.Photos[0]}" style="width:46px;height:46px;object-fit:cover;border-radius:4px">`:''}</td>
-        <td>${escapeHtml(p.Nom)}</td><td>${escapeHtml(p.Categorie||'')}</td><td>${formatPrice(p.Prix)}</td><td>${p.Stock}</td><td>${p.Disponible?'Disponible':'Masqué'}</td>
+        <td>${escapeHtml(p.Nom)}</td><td>${escapeHtml(p.Categorie||'')}</td><td>${formatPrice(p.Prix)}</td><td>${Number(p.Stock)||0}</td><td>${p.Disponible?'Disponible':'Masqué'}</td>
         <td><span class="action-link" data-edit="${p.ID}">Modifier</span><span class="action-link" data-delete="${p.ID}" style="color:#e0554f">Supprimer</span></td>
       </tr>`).join('');
     tbody.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => editerProduitVendeur(produits.find(p=>p.ID===el.dataset.edit))));
@@ -2167,23 +2330,33 @@ Router.add('/vendeur', { title: '/vendeur', render: () => {  let vendeurToken = 
     tbody.innerHTML = commandes.map(c => `
       <tr>
         <td>${new Date(c.Date).toLocaleDateString('fr-FR')}</td><td>${escapeHtml(c.NomClient)}</td><td>${escapeHtml(c.Telephone||'')}</td>
-        <td>${escapeHtml(c.ProduitNom)}</td><td>${c.Quantite}</td><td>${formatPrice(c.Total)}</td><td>${escapeHtml(c.Statut||'')}</td>
+        <td>${escapeHtml(c.ProduitNom)}</td><td>${Number(c.Quantite)||0}</td><td>${formatPrice(c.Total)}</td><td>${escapeHtml(c.Statut||'')}</td>
       </tr>`).join('');
   }
 
-  async function chargerMessagesVendeur() {
-    const tbody = document.getElementById('v-messages-tbody');
+  async function chargerAvisVendeur() {
+    const tbody = document.getElementById('v-avis-tbody');
     if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="4">Chargement...</td></tr>';
-    const { messages, error } = await API.get({ action: 'messages', token: vendeurToken });
+    tbody.innerHTML = '<tr><td colspan="7">Chargement...</td></tr>';
+    const { avis, error } = await API.get({ action: 'avisVendeur', token: vendeurToken });
     if (gererSessionInvalide(error)) return;
-    if (error) { tbody.innerHTML = `<tr><td colspan="4">${escapeHtml(error)}</td></tr>`; return; }
-    if (!messages.length) { tbody.innerHTML = '<tr><td colspan="4">Aucun message pour le moment.</td></tr>'; return; }
-    tbody.innerHTML = messages.map(m => `
+    if (error) { tbody.innerHTML = `<tr><td colspan="7">${escapeHtml(error)}</td></tr>`; return; }
+    if (!avis.length) { tbody.innerHTML = '<tr><td colspan="7">Aucun avis pour le moment.</td></tr>'; return; }
+    tbody.innerHTML = avis.map(a => `
       <tr>
-        <td>${new Date(m.Date).toLocaleDateString('fr-FR')}</td><td>${escapeHtml(m.Nom)}</td>
-        <td>${escapeHtml(m.Email||m.Telephone||'')}</td><td>${escapeHtml(m.Message)}</td>
+        <td>${a.Date?new Date(a.Date).toLocaleDateString('fr-FR'):''}</td>
+        <td>${escapeHtml(a.ProduitNom||'')}</td>
+        <td>${escapeHtml(a.NomClient||'')}</td>
+        <td>${'★'.repeat(Number(a.Note)||0)}${'☆'.repeat(5-(Number(a.Note)||0))}</td>
+        <td style="max-width:280px">${escapeHtml(a.Commentaire||'')}</td>
+        <td style="color:${a.Approuve?'var(--or-clair)':'var(--gris-texte)'}">${a.Approuve?'Visible':'Masqué'}</td>
+        <td><span class="action-link" data-toggle-avis="${a.ID}" data-approuve-actuel="${a.Approuve}">${a.Approuve?'Masquer':'Approuver'}</span></td>
       </tr>`).join('');
+    tbody.querySelectorAll('[data-toggle-avis]').forEach(el => el.addEventListener('click', async () => {
+      const nouveauStatut = el.dataset.approuveActuel !== 'true';
+      const res = await API.post('avisApprouver', { id: el.dataset.toggleAvis, approuve: nouveauStatut }, vendeurToken);
+      if (res.success) chargerAvisVendeur(); else alert(res.error || 'Erreur.');
+    }));
   }
 
   /* ---- Upload photos + IA (identique en logique à /admin, scopé au token vendeur) ---- */
@@ -2375,9 +2548,9 @@ Router.add('/boutique', { title: '/boutique', render: async (params) => {
     const byId = {}; (produits||[]).forEach(p => byId[p.ID] = p);
 
     view.innerHTML = `
-      <div style="background:${vendeur.Banniere?`url(${vendeur.Banniere}) center/cover`:'var(--noir-soft)'};height:220px;display:flex;align-items:flex-end">
+      <div style="background:${vendeur.Banniere?`url(${escapeHtml(vendeur.Banniere)}) center/cover`:'var(--noir-soft)'};height:220px;display:flex;align-items:flex-end">
         <div class="container" style="display:flex;align-items:center;gap:16px;padding-bottom:20px;flex-wrap:wrap">
-          ${vendeur.Logo?`<img src="${vendeur.Logo}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;border:2px solid var(--or)">`:''}
+          ${vendeur.Logo?`<img src="${escapeHtml(vendeur.Logo)}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;border:2px solid var(--or)">`:''}
           <div>
             <h1 style="font-size:1.8rem">${escapeHtml(vendeur.Boutique)}</h1>
             <p style="color:var(--gris-texte);font-size:0.9rem">${escapeHtml(vendeur.Adresse||'')}</p>
@@ -2387,8 +2560,8 @@ Router.add('/boutique', { title: '/boutique', render: async (params) => {
       <div class="container" style="padding:30px 0">
         ${vendeur.Description?`<p style="color:var(--gris-texte);margin-bottom:20px;max-width:700px">${escapeHtml(vendeur.Description)}</p>`:''}
         <div style="display:flex;gap:12px;margin-bottom:30px">
-          ${vendeur.Whatsapp?`<a href="https://wa.me/${vendeur.Whatsapp}" target="_blank" class="btn btn-whatsapp">WhatsApp</a>`:''}
-          ${vendeur.Email?`<a href="mailto:${vendeur.Email}" class="btn btn-outline">Email</a>`:''}
+          ${vendeur.Whatsapp?`<a href="https://wa.me/${escapeHtml(vendeur.Whatsapp)}" target="_blank" class="btn btn-whatsapp">WhatsApp</a>`:''}
+          ${vendeur.Email?`<a href="mailto:${escapeHtml(vendeur.Email)}" class="btn btn-outline">Email</a>`:''}
         </div>
         <div id="boutique-produits" class="products-grid">
           ${(produits&&produits.length) ? produits.map(renderProductCard).join('') : '<p class="empty-state">Aucun produit publié pour le moment.</p>'}
